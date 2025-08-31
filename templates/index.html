@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FRC RAG Chat Assistant</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="chat-container">
+        <!-- Header -->
+        <div class="chat-header">
+            <div class="header-content">
+                <div class="header-title">
+                    <i class="fas fa-robot"></i>
+                    <h1>FRC RAG Assistant</h1>
+                </div>
+                <div class="header-subtitle">
+                    Ask questions about your FRC documentation with image support
+                </div>
+            </div>
+        </div>
+
+        <!-- Chat Messages Area -->
+        <div class="chat-messages" id="chatMessages">
+            <div class="message assistant-message welcome-message">
+                <div class="message-avatar">
+                    <i class="fas fa-robot"></i>
+                </div>
+                <div class="message-content">
+                    <div class="message-text">
+                        <h3>Welcome to the FRC RAG Assistant! 🤖</h3>
+                        <p>I can help you search through your FRC documentation and show you relevant images. Try asking about:</p>
+                        <ul>
+                            <li>"tube shaped object" - Find cylindrical components</li>
+                            <li>"coral picker mechanism" - Search for manipulation systems</li>
+                            <li>"CAD design" - Find CAD-related content and images</li>
+                            <li>"gripper mechanism" - Search for gripping systems</li>
+                            <li>"elevator design" - Find lifting mechanisms</li>
+                        </ul>
+                        <p>Type your question below to get started!</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Input Area -->
+        <div class="chat-input-container">
+            <div class="chat-input-wrapper">
+                <input 
+                    type="text" 
+                    id="messageInput" 
+                    placeholder="Ask me anything about your FRC documentation..."
+                    autocomplete="off"
+                >
+                <button id="sendButton" type="button">
+                    <i class="fas fa-paper-plane"></i>
+                </button>
+            </div>
+            <div class="input-footer">
+                <small>Press Enter to send</small>
+            </div>
+        </div>
+
+        <!-- Loading Indicator -->
+        <div class="loading-overlay" id="loadingOverlay">
+            <div class="loading-spinner">
+                <i class="fas fa-cog fa-spin"></i>
+                <p>Processing your query...</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Image Modal -->
+    <div class="image-modal" id="imageModal">
+        <div class="image-modal-content">
+            <span class="image-modal-close" id="modalClose">&times;</span>
+            <img class="image-modal-img" id="modalImage" src="" alt="">
+            <div class="image-modal-info" id="modalInfo">
+                <h3 id="modalTitle"></h3>
+                <p id="modalDescription"></p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // DOM Elements
+        const chatMessages = document.getElementById('chatMessages');
+        const messageInput = document.getElementById('messageInput');
+        const sendButton = document.getElementById('sendButton');
+        const loadingOverlay = document.getElementById('loadingOverlay');
+        const imageModal = document.getElementById('imageModal');
+        const modalImage = document.getElementById('modalImage');
+        const modalTitle = document.getElementById('modalTitle');
+        const modalDescription = document.getElementById('modalDescription');
+        const modalClose = document.getElementById('modalClose');
+
+        // Event Listeners
+        sendButton.addEventListener('click', sendMessage);
+        messageInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        modalClose.addEventListener('click', closeModal);
+        imageModal.addEventListener('click', function(e) {
+            if (e.target === imageModal) {
+                closeModal();
+            }
+        });
+
+        // Functions
+        function sendMessage() {
+            const message = messageInput.value.trim();
+            if (!message) return;
+
+            // Add user message to chat
+            addMessage(message, 'user');
+            
+            // Clear input
+            messageInput.value = '';
+            
+            // Show loading
+            showLoading();
+            
+            // Send request to backend
+            fetch('/api/query', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ query: message })
+            })
+            .then(response => response.json())
+            .then(data => {
+                hideLoading();
+                if (data.error) {
+                    addMessage(`Error: ${data.error}`, 'assistant', [], true);
+                } else {
+                    addMessage(data.response, 'assistant', data.images);
+                }
+            })
+            .catch(error => {
+                hideLoading();
+                console.error('Error:', error);
+                addMessage('Sorry, there was an error processing your request. Please try again.', 'assistant', [], true);
+            });
+        }
+
+        function addMessage(text, sender, images = [], isError = false) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${sender}-message${isError ? ' error-message' : ''}`;
+
+            const avatarDiv = document.createElement('div');
+            avatarDiv.className = 'message-avatar';
+            avatarDiv.innerHTML = sender === 'user' ? '<i class="fas fa-user"></i>' : '<i class="fas fa-robot"></i>';
+
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content';
+
+            const textDiv = document.createElement('div');
+            textDiv.className = 'message-text';
+            textDiv.innerHTML = formatText(text);
+
+            contentDiv.appendChild(textDiv);
+
+            // Add images if present
+            if (images && images.length > 0) {
+                const imagesDiv = document.createElement('div');
+                imagesDiv.className = 'message-images';
+                
+                const imageHeader = document.createElement('div');
+                imageHeader.className = 'image-header';
+                imageHeader.innerHTML = `<i class="fas fa-images"></i> Related Images (${images.length})`;
+                imagesDiv.appendChild(imageHeader);
+
+                const imageGrid = document.createElement('div');
+                imageGrid.className = 'image-grid';
+
+                images.forEach((image, index) => {
+                    const imageItem = createImageItem(image, index);
+                    imageGrid.appendChild(imageItem);
+                });
+
+                imagesDiv.appendChild(imageGrid);
+                contentDiv.appendChild(imagesDiv);
+            }
+
+            messageDiv.appendChild(avatarDiv);
+            messageDiv.appendChild(contentDiv);
+
+            chatMessages.appendChild(messageDiv);
+            scrollToBottom();
+        }
+
+        function createImageItem(image, index) {
+            const imageDiv = document.createElement('div');
+            imageDiv.className = 'image-item';
+
+            if (image.exists) {
+                const img = document.createElement('img');
+                img.src = `/images/${image.web_path}`;
+                img.alt = image.filename;
+                img.className = 'image-thumbnail';
+                
+                const overlay = document.createElement('div');
+                overlay.className = 'image-overlay';
+                overlay.innerHTML = `
+                    <i class="fas fa-search-plus"></i>
+                    <span>Click to view</span>
+                `;
+                
+                // Add click event to both image and overlay
+                const clickHandler = () => openImageModal(image);
+                img.addEventListener('click', clickHandler);
+                overlay.addEventListener('click', clickHandler);
+                imageDiv.addEventListener('click', clickHandler);
+                
+                imageDiv.appendChild(img);
+                imageDiv.appendChild(overlay);
+            } else {
+                imageDiv.className += ' image-not-found';
+                imageDiv.innerHTML = `
+                    <div class="image-placeholder">
+                        <i class="fas fa-image"></i>
+                        <span>Image not found</span>
+                    </div>
+                `;
+            }
+
+            const infoDiv = document.createElement('div');
+            infoDiv.className = 'image-info';
+            infoDiv.innerHTML = `
+                <div class="image-filename">${image.filename}</div>
+                <div class="image-page">Page ${image.page || 'N/A'}</div>
+            `;
+            
+            // Prevent info div from triggering modal when clicked
+            infoDiv.addEventListener('click', (e) => {
+                if (image.exists) {
+                    e.stopPropagation();
+                    openImageModal(image);
+                }
+            });
+
+            imageDiv.appendChild(infoDiv);
+            return imageDiv;
+        }
+
+        function openImageModal(image) {
+            console.log('Opening modal for image:', image.filename);
+            modalImage.src = `/images/${image.web_path}`;
+            modalTitle.textContent = image.filename;
+            modalDescription.innerHTML = `
+                <strong>Page:</strong> ${image.page || 'N/A'}<br>
+                <strong>Path:</strong> ${image.file_path}<br>
+                ${image.ocr_text ? `<strong>Content:</strong> ${image.ocr_text}` : ''}
+            `;
+            imageModal.style.display = 'block';
+            console.log('Modal should now be visible');
+        }
+
+        function closeModal() {
+            imageModal.style.display = 'none';
+        }
+
+        function formatText(text) {
+            // Simple formatting for line breaks and basic markdown
+            return text
+                .replace(/\n/g, '<br>')
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                .replace(/\*(.*?)\*/g, '<em>$1</em>');
+        }
+
+        function showLoading() {
+            loadingOverlay.style.display = 'flex';
+        }
+
+        function hideLoading() {
+            loadingOverlay.style.display = 'none';
+        }
+
+        function scrollToBottom() {
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            messageInput.focus();
+        });
+    </script>
+</body>
+</html>
