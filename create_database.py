@@ -8,6 +8,10 @@ from PIL import Image
 import io
 import hashlib
 import base64
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
+from functools import partial
+import multiprocessing as mp
+import time
 
 from langchain.schema import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -19,6 +23,11 @@ import pytesseract
 DATA_PATH = "data"
 IMAGES_PATH = os.path.join(DATA_PATH, "images")
 CHROMA_PATH = "db"
+
+# Parallelization settings
+MAX_PDF_WORKERS = None  # None = auto-detect based on CPU count
+MAX_IMAGE_WORKERS = 4   # Limit image processing workers to avoid overwhelming system
+ENABLE_PARALLEL_PROCESSING = True  # Set to False to disable parallel processing
 
 # Image filtering settings
 MIN_IMAGE_SIZE = (80, 80)  # Minimum width and height
@@ -74,6 +83,7 @@ TECHNICAL_KEYWORDS = [
 
 def main():
     print("Starting database creation...")
+    start_time = time.time()
     
     # Clear existing database
     if os.path.exists(CHROMA_PATH):
@@ -89,34 +99,8 @@ def main():
     
     print(f"Found {len(pdf_files)} PDF files: {[os.path.basename(f) for f in pdf_files]}")
     
-    all_documents = []
-    
-    # Process each PDF file
-    for pdf_path in pdf_files:
-        print(f"\n{'='*60}")
-        print(f"Processing: {os.path.basename(pdf_path)}")
-        print(f"{'='*60}")
-        
-        # Create PDF-specific image folder
-        pdf_name = os.path.splitext(os.path.basename(pdf_path))[0]
-        pdf_images_path = os.path.join(IMAGES_PATH, pdf_name)
-        
-        # Clear existing images for this PDF
-        if os.path.exists(pdf_images_path):
-            print(f"Removing existing images at {pdf_images_path}")
-            shutil.rmtree(pdf_images_path)
-        
-        # Ensure directories exist
-        os.makedirs(pdf_images_path, exist_ok=True)
-        
-        # Process this PDF
-        try:
-            documents = process_pdf_with_images(pdf_path, pdf_images_path)
-            all_documents.extend(documents)
-            print(f"Successfully processed {os.path.basename(pdf_path)}: {len(documents)} documents")
-        except Exception as e:
-            print(f"Error processing {os.path.basename(pdf_path)}: {e}")
-            continue
+    # Process PDFs in parallel
+    all_documents = process_pdfs_parallel(pdf_files)
     
     if not all_documents:
         print("No documents were successfully processed.")
@@ -134,7 +118,78 @@ def main():
     # Save to vector database
     save_to_chroma(chunks)
     
-    print("Enhanced database creation completed!")
+    end_time = time.time()
+    print(f"Enhanced database creation completed in {end_time - start_time:.2f} seconds!")
+
+def process_pdfs_parallel(pdf_files: List[str], max_workers: int = None) -> List[Document]:
+    """
+    Process multiple PDFs in parallel using ThreadPoolExecutor
+    """
+    if not ENABLE_PARALLEL_PROCESSING or len(pdf_files) == 1:
+        # Fall back to sequential processing
+        print("Processing PDFs sequentially...")
+        all_documents = []
+        for pdf_path in pdf_files:
+            print(f"\nProcessing: {os.path.basename(pdf_path)}")
+            
+            # Create PDF-specific image folder
+            pdf_name = os.path.splitext(os.path.basename(pdf_path))[0]
+            pdf_images_path = os.path.join(IMAGES_PATH, pdf_name)
+            
+            # Clear existing images for this PDF
+            if os.path.exists(pdf_images_path):
+                print(f"Removing existing images at {pdf_images_path}")
+                shutil.rmtree(pdf_images_path)
+            
+            # Ensure directories exist
+            os.makedirs(pdf_images_path, exist_ok=True)
+            
+            try:
+                documents = process_pdf_with_images(pdf_path, pdf_images_path)
+                all_documents.extend(documents)
+                print(f"✓ Completed {os.path.basename(pdf_path)}: {len(documents)} documents")
+            except Exception as e:
+                print(f"✗ Error processing {os.path.basename(pdf_path)}: {e}")
+        
+        return all_documents
+    
+    if max_workers is None:
+        max_workers = MAX_PDF_WORKERS or min(len(pdf_files), mp.cpu_count())
+    
+    print(f"Processing {len(pdf_files)} PDFs using {max_workers} workers...")
+    
+    all_documents = []
+    
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all PDF processing tasks
+        future_to_pdf = {}
+        for pdf_path in pdf_files:
+            # Create PDF-specific image folder
+            pdf_name = os.path.splitext(os.path.basename(pdf_path))[0]
+            pdf_images_path = os.path.join(IMAGES_PATH, pdf_name)
+            
+            # Clear existing images for this PDF
+            if os.path.exists(pdf_images_path):
+                print(f"Removing existing images at {pdf_images_path}")
+                shutil.rmtree(pdf_images_path)
+            
+            # Ensure directories exist
+            os.makedirs(pdf_images_path, exist_ok=True)
+            
+            future = executor.submit(process_pdf_with_images, pdf_path, pdf_images_path)
+            future_to_pdf[future] = pdf_path
+        
+        # Collect results as they complete
+        for future in as_completed(future_to_pdf):
+            pdf_path = future_to_pdf[future]
+            try:
+                documents = future.result()
+                all_documents.extend(documents)
+                print(f"✓ Completed {os.path.basename(pdf_path)}: {len(documents)} documents")
+            except Exception as e:
+                print(f"✗ Error processing {os.path.basename(pdf_path)}: {e}")
+    
+    return all_documents
 
 def process_pdf_with_images(pdf_path: str, pdf_images_path: str) -> List[Document]:
     """
@@ -144,12 +199,15 @@ def process_pdf_with_images(pdf_path: str, pdf_images_path: str) -> List[Documen
         raise FileNotFoundError(f"PDF file not found at {pdf_path}")
     
     documents = []
+    pdf_name = os.path.basename(pdf_path)
     
     # Open PDF
     pdf_document = fitz.open(pdf_path)
-    print(f"Processing PDF with {len(pdf_document)} pages...")
+    total_pages = len(pdf_document)
+    print(f"[{pdf_name}] Processing PDF with {total_pages} pages...")
     
-    for page_num in range(len(pdf_document)):
+    pages_processed = 0
+    for page_num in range(total_pages):
         page = pdf_document[page_num]
         
         # Extract text from page
@@ -223,10 +281,13 @@ def process_pdf_with_images(pdf_path: str, pdf_images_path: str) -> List[Documen
                         }
                     )
                     documents.append(img_document)
+        
+        pages_processed += 1
+        if pages_processed % 5 == 0 or pages_processed == total_pages:
+            print(f"[{pdf_name}] Processed {pages_processed}/{total_pages} pages...")
     
-    total_pages = len(pdf_document)
     pdf_document.close()
-    print(f"Extracted content from {total_pages} pages, created {len(documents)} documents")
+    print(f"[{pdf_name}] Extracted content from {total_pages} pages, created {len(documents)} documents")
     return documents
 
 def analyze_page_context(page_text: str, page_num: int) -> Dict[str, Any]:
@@ -281,11 +342,15 @@ def analyze_page_context(page_text: str, page_num: int) -> Dict[str, Any]:
 
 def extract_images_from_page(page, page_num: int, pdf_images_path: str, page_context: Dict[str, Any] = None) -> List[Dict[str, Any]]:
     """
-    Extract images from a specific PDF page with filtering
+    Extract images from a specific PDF page with filtering and parallel OCR
     """
-    image_info = []
     image_list = page.get_images()
     
+    if not image_list:
+        return []
+    
+    # First pass: extract and save all valid images
+    valid_images = []
     for img_index, img in enumerate(image_list):
         try:
             # Get image data
@@ -317,44 +382,106 @@ def extract_images_from_page(page, page_num: int, pdf_images_path: str, page_con
                     pix = None
                     continue
                 
-                # Perform OCR on the image
-                ocr_text = ""
-                try:
-                    ocr_text = pytesseract.image_to_string(pil_image).strip()
-                except Exception as e:
-                    print(f"OCR failed for {filename}: {e}")
-                
-                # Filter based on OCR content
-                if len(ocr_text) < MIN_OCR_CHARS and not has_meaningful_content(pil_image):
-                    print(f"Filtered out image: {filename} (no meaningful content)")
-                    os.remove(file_path)
-                    pix = None
-                    continue
-                
-                # Enhanced content filtering for technical relevance
-                if not is_technically_relevant(ocr_text, pil_image, page_num, page_context):
-                    print(f"Filtered out image: {filename} (not technically relevant)")
-                    os.remove(file_path)
-                    pix = None
-                    continue
-                
-                # Create image info
-                img_info = {
+                valid_images.append({
                     "filename": filename,
                     "file_path": file_path,
-                    "page": page_num + 1,
-                    "index": img_index,
-                    "ocr_text": ocr_text,
-                    "size": pil_image.size
-                }
-                
-                image_info.append(img_info)
-                print(f"Extracted image: {filename} (OCR: {len(ocr_text)} chars, Size: {pil_image.size})")
+                    "pil_image": pil_image,
+                    "page_num": page_num,
+                    "img_index": img_index
+                })
             
             pix = None  # Free memory
             
         except Exception as e:
             print(f"Error extracting image {img_index} from page {page_num}: {e}")
+    
+    if not valid_images:
+        return []
+    
+    # Second pass: perform OCR in parallel and apply filters
+    return process_images_parallel(valid_images, page_context)
+
+def process_single_image_ocr(image_data: Dict[str, Any], page_context: Dict[str, Any] = None) -> Dict[str, Any]:
+    """
+    Process a single image for OCR and filtering
+    """
+    filename = image_data["filename"]
+    file_path = image_data["file_path"]
+    pil_image = image_data["pil_image"]
+    page_num = image_data["page_num"]
+    
+    try:
+        # Perform OCR on the image
+        ocr_text = ""
+        try:
+            ocr_text = pytesseract.image_to_string(pil_image).strip()
+        except Exception as e:
+            print(f"OCR failed for {filename}: {e}")
+        
+        # Filter based on OCR content
+        if len(ocr_text) < MIN_OCR_CHARS and not has_meaningful_content(pil_image):
+            print(f"Filtered out image: {filename} (no meaningful content)")
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            return None
+        
+        # Enhanced content filtering for technical relevance
+        if not is_technically_relevant(ocr_text, pil_image, page_num, page_context):
+            print(f"Filtered out image: {filename} (not technically relevant)")
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            return None
+        
+        # Create image info
+        img_info = {
+            "filename": filename,
+            "file_path": file_path,
+            "page": page_num + 1,
+            "index": image_data["img_index"],
+            "ocr_text": ocr_text,
+            "size": pil_image.size
+        }
+        
+        print(f"Extracted image: {filename} (OCR: {len(ocr_text)} chars, Size: {pil_image.size})")
+        return img_info
+        
+    except Exception as e:
+        print(f"Error processing image {filename}: {e}")
+        if os.path.exists(file_path):
+            os.remove(file_path)
+        return None
+
+def process_images_parallel(valid_images: List[Dict[str, Any]], page_context: Dict[str, Any] = None) -> List[Dict[str, Any]]:
+    """
+    Process multiple images in parallel for OCR and filtering
+    """
+    if not ENABLE_PARALLEL_PROCESSING or len(valid_images) <= 1:
+        # For single image or disabled parallel processing, process directly
+        image_info = []
+        for img_data in valid_images:
+            result = process_single_image_ocr(img_data, page_context)
+            if result:
+                image_info.append(result)
+        return image_info
+    
+    image_info = []
+    max_workers = min(len(valid_images), MAX_IMAGE_WORKERS)
+    
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit OCR tasks
+        ocr_func = partial(process_single_image_ocr, page_context=page_context)
+        future_to_image = {executor.submit(ocr_func, img_data): img_data 
+                          for img_data in valid_images}
+        
+        # Collect results
+        for future in as_completed(future_to_image):
+            try:
+                result = future.result()
+                if result:
+                    image_info.append(result)
+            except Exception as e:
+                img_data = future_to_image[future]
+                print(f"Error in parallel OCR for {img_data['filename']}: {e}")
     
     return image_info
 
@@ -703,10 +830,100 @@ def test_database():
             if result.metadata.get('image_file'):
                 print(f"Image file: {result.metadata['image_file']}")
 
-if __name__ == "__main__":
-    main()
+def benchmark_performance():
+    """
+    Benchmark the performance difference between parallel and sequential processing
+    """
+    print("\n" + "="*50)
+    print("PERFORMANCE BENCHMARK")
+    print("="*50)
     
-    # Optionally test the database
-    print("\nWould you like to test the database? (y/n)")
-    if input().lower().startswith('y'):
-        test_database()
+    # Find PDF files
+    pdf_files = glob.glob(os.path.join(DATA_PATH, "*.pdf"))
+    if not pdf_files:
+        print("No PDF files found for benchmarking")
+        return
+    
+    print(f"Benchmarking with {len(pdf_files)} PDF files...")
+    
+    # Test with parallel processing enabled
+    global ENABLE_PARALLEL_PROCESSING
+    original_setting = ENABLE_PARALLEL_PROCESSING
+    
+    try:
+        # Benchmark parallel processing
+        ENABLE_PARALLEL_PROCESSING = True
+        print("\n1. Testing with parallel processing ENABLED...")
+        start_time = time.time()
+        
+        # Process just one PDF for quick benchmark
+        test_pdf = pdf_files[0]
+        pdf_name = os.path.splitext(os.path.basename(test_pdf))[0]
+        pdf_images_path = os.path.join(IMAGES_PATH, f"{pdf_name}_benchmark_parallel")
+        
+        if os.path.exists(pdf_images_path):
+            shutil.rmtree(pdf_images_path)
+        os.makedirs(pdf_images_path, exist_ok=True)
+        
+        parallel_docs = process_pdf_with_images(test_pdf, pdf_images_path)
+        parallel_time = time.time() - start_time
+        
+        # Benchmark sequential processing
+        ENABLE_PARALLEL_PROCESSING = False
+        print("\n2. Testing with parallel processing DISABLED...")
+        start_time = time.time()
+        
+        pdf_images_path = os.path.join(IMAGES_PATH, f"{pdf_name}_benchmark_sequential")
+        
+        if os.path.exists(pdf_images_path):
+            shutil.rmtree(pdf_images_path)
+        os.makedirs(pdf_images_path, exist_ok=True)
+        
+        sequential_docs = process_pdf_with_images(test_pdf, pdf_images_path)
+        sequential_time = time.time() - start_time
+        
+        # Results
+        print(f"\n{'='*50}")
+        print("BENCHMARK RESULTS")
+        print(f"{'='*50}")
+        print(f"PDF: {os.path.basename(test_pdf)}")
+        print(f"Parallel processing time:   {parallel_time:.2f} seconds")
+        print(f"Sequential processing time: {sequential_time:.2f} seconds")
+        print(f"Speedup: {sequential_time/parallel_time:.2f}x")
+        print(f"Documents (parallel):   {len(parallel_docs)}")
+        print(f"Documents (sequential): {len(sequential_docs)}")
+        
+        # Cleanup benchmark directories
+        for dir_name in [f"{pdf_name}_benchmark_parallel", f"{pdf_name}_benchmark_sequential"]:
+            dir_path = os.path.join(IMAGES_PATH, dir_name)
+            if os.path.exists(dir_path):
+                shutil.rmtree(dir_path)
+        
+    finally:
+        # Restore original setting
+        ENABLE_PARALLEL_PROCESSING = original_setting
+
+if __name__ == "__main__":
+    import sys
+    
+    # Check for benchmark flag
+    if len(sys.argv) > 1 and sys.argv[1] == "--benchmark":
+        benchmark_performance()
+    else:
+        main()
+        
+        # Optionally test the database
+        print("\nWould you like to test the database? (y/n)")
+        try:
+            if input().lower().startswith('y'):
+                test_database()
+        except KeyboardInterrupt:
+            print("\nSkipping database test.")
+        
+        # Optionally run benchmark
+        print("\nWould you like to run a performance benchmark? (y/n)")
+        try:
+            if input().lower().startswith('y'):
+                benchmark_performance()
+        except KeyboardInterrupt:
+            print("\nSkipping benchmark.")
