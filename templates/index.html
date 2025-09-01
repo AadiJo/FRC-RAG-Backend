@@ -30,16 +30,23 @@
                 </div>
                 <div class="message-content">
                     <div class="message-text">
-                        <h3>Welcome to the FRC RAG Assistant! 🤖</h3>
-                        <p>I can help you search through your FRC documentation and show you relevant images. Try asking about:</p>
+                        <h3>Welcome to the Enhanced FRC RAG Assistant! 🤖⚙️</h3>
+                        <p>I can help you search through your FRC documentation with intelligent game piece mapping. Try asking about:</p>
                         <ul>
-                            <li>"tube shaped object" - Find cylindrical components</li>
-                            <li>"coral picker mechanism" - Search for manipulation systems</li>
-                            <li>"CAD design" - Find CAD-related content and images</li>
-                            <li>"gripper mechanism" - Search for gripping systems</li>
-                            <li>"elevator design" - Find lifting mechanisms</li>
+                            <li><strong>Generic terms:</strong> "How to pick up a ball?" → Maps to Algae, Cargo, Power Cells</li>
+                            <li><strong>Shape-based:</strong> "cube intake mechanism" → Maps to Cubes, Coral blocks</li>
+                            <li><strong>Ring/donut:</strong> "ring scoring strategies" → Maps to Notes from Crescendo</li>
+                            <li><strong>Cone handling:</strong> "traffic cone gripper" → Maps to Cones from Charged Up</li>
+                            <li><strong>Season-specific:</strong> "2025 game pieces" → Algae and Coral from Reefscape</li>
                         </ul>
-                        <p>Type your question below to get started!</p>
+                        <p><strong>New Features:</strong></p>
+                        <ul>
+                            <li>🎯 Smart game piece recognition (ball → algae, cube → coral, etc.)</li>
+                            <li>📅 Multi-season context (2020-2025)</li>
+                            <li>🔍 Enhanced search with game piece properties</li>
+                            <li>📊 Detailed game piece specifications and handling tips</li>
+                        </ul>
+                        <p>Type your question below - use natural language and I'll understand!</p>
                     </div>
                 </div>
             </div>
@@ -140,7 +147,7 @@
                 if (data.error) {
                     addMessage(`Error: ${data.error}`, 'assistant', [], true);
                 } else {
-                    addMessage(data.response, 'assistant', data.images);
+                    addMessage(data.response, 'assistant', data.images, false, data);
                 }
             })
             .catch(error => {
@@ -150,7 +157,7 @@
             });
         }
 
-        function addMessage(text, sender, images = [], isError = false) {
+        function addMessage(text, sender, images = [], isError = false, enhancedData = null) {
             const messageDiv = document.createElement('div');
             messageDiv.className = `message ${sender}-message${isError ? ' error-message' : ''}`;
 
@@ -160,6 +167,23 @@
 
             const contentDiv = document.createElement('div');
             contentDiv.className = 'message-content';
+
+            // Add game piece mapping info if available
+            if (enhancedData && enhancedData.matched_pieces && enhancedData.matched_pieces.length > 0) {
+                const mappingDiv = document.createElement('div');
+                mappingDiv.className = 'game-piece-mapping';
+                mappingDiv.innerHTML = `
+                    <div class="mapping-header">
+                        <i class="fas fa-link"></i> Game Piece Mapping
+                    </div>
+                    <div class="mapping-content">
+                        Detected: <strong>${enhancedData.matched_pieces.join(', ')}</strong>
+                        ${enhancedData.enhanced_query !== enhancedData.query ? 
+                            `<br><small>Enhanced search: "${enhancedData.enhanced_query}"</small>` : ''}
+                    </div>
+                `;
+                contentDiv.appendChild(mappingDiv);
+            }
 
             const textDiv = document.createElement('div');
             textDiv.className = 'message-text';

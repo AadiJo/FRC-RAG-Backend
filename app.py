@@ -2,10 +2,7 @@ import os
 import json
 from flask import Flask, render_template, request, jsonify, send_from_directory
 from typing import List, Dict, Any
-from langchain_community.vectorstores import Chroma
-from langchain.prompts import ChatPromptTemplate
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.llms import Ollama
+from enhanced_query_processor import EnhancedQueryProcessor
 
 app = Flask(__name__)
 
@@ -13,154 +10,57 @@ app = Flask(__name__)
 CHROMA_PATH = "db"  # Updated to match create_database.py
 IMAGES_PATH = "data/images"
 
-PROMPT_TEMPLATE = """
-Answer the question based only on the following context:
+# Initialize enhanced query processor
+query_processor = None
 
-{context}
-
----
-
-Answer the question based on the above context: {question}
-
-If relevant images are mentioned in the context, include references to them in your answer.
-Based on the context and your knowledge, provide a detailed and accurate response, and draw conclusions if applicable.
-If the context does not provide enough information for the full answer, connect what is provided with your own knowledge to give a comprehensive response.
-"""
-
-# Initialize embedding function and database
-embedding_function = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-db = None
-
-def init_database():
-    """Initialize the database connection"""
-    global db
-    if not os.path.exists(CHROMA_PATH):
-        print(f"Database not found at {CHROMA_PATH}. Please run create_database.py first.")
+def init_query_processor():
+    """Initialize the enhanced query processor"""
+    global query_processor
+    try:
+        query_processor = EnhancedQueryProcessor(CHROMA_PATH, IMAGES_PATH)
+        return True
+    except Exception as e:
+        print(f"Error initializing query processor: {e}")
         return False
-    
-    db = Chroma(persist_directory=CHROMA_PATH, embedding_function=embedding_function)
-    return True
-
-def collect_images_from_result(doc) -> List[Dict[str, Any]]:
-    """Collect image information from a document result"""
-    images_info = []
-    
-    # Check if this is an image document
-    if doc.metadata.get('type') == 'image_text':
-        image_file = doc.metadata.get('image_file')
-        image_path = doc.metadata.get('image_path')
-        if image_file and image_path:
-            images_info.append({
-                'filename': image_file,
-                'file_path': image_path,
-                'page': doc.metadata.get('page'),
-                'ocr_text': doc.page_content.replace('Image content: ', '').split('\n\nContext:')[0]
-            })
-    
-    # Check if this is an image metadata document
-    elif doc.metadata.get('type') == 'image_info':
-        image_file = doc.metadata.get('image_file')
-        image_path = doc.metadata.get('image_path')
-        if image_file and image_path:
-            images_info.append({
-                'filename': image_file,
-                'file_path': image_path,
-                'page': doc.metadata.get('page'),
-                'ocr_text': ''
-            })
-    
-    # Check if this document has associated images
-    elif doc.metadata.get('type') == 'text_with_images':
-        image_filenames_str = doc.metadata.get('image_filenames', '[]')
-        try:
-            image_filenames = json.loads(image_filenames_str)
-            page_num = doc.metadata.get('page', 1)
-            
-            # Determine PDF name from source path
-            source_path = doc.metadata.get('source', '')
-            pdf_name = os.path.splitext(os.path.basename(source_path))[0] if source_path else ''
-            
-            for filename in image_filenames:
-                # Construct path using PDF subfolder
-                if pdf_name:
-                    pdf_subfolder_path = os.path.join(IMAGES_PATH, pdf_name, filename)
-                else:
-                    pdf_subfolder_path = None
-                
-                legacy_path = os.path.join(IMAGES_PATH, filename)
-                
-                # Check both new and old paths for compatibility
-                if pdf_subfolder_path and os.path.exists(pdf_subfolder_path):
-                    file_path = pdf_subfolder_path
-                elif os.path.exists(legacy_path):
-                    file_path = legacy_path
-                else:
-                    file_path = pdf_subfolder_path if pdf_subfolder_path else legacy_path
-                
-                images_info.append({
-                    'filename': filename,
-                    'file_path': file_path,
-                    'page': page_num,
-                    'ocr_text': ''
-                })
-        except:
-            pass  # If JSON parsing fails, continue without images
-    
-    return images_info
 
 def query_database(query_text: str, k: int = 5) -> Dict[str, Any]:
-    """Query the database and return results with images"""
-    if not db:
-        return {"error": "Database not initialized. Please run create_database.py first."}
+    """Query the database using enhanced query processor"""
+    if not query_processor:
+        return {"error": "Query processor not initialized. Please run create_database.py first."}
     
-    # Search database
-    results = db.similarity_search_with_relevance_scores(query_text, k=k)
+    # Use enhanced query processor
+    result = query_processor.process_query(query_text, k)
     
-    if len(results) == 0 or results[0][1] < 0.1:
-        return {"error": f"No relevant results found for: '{query_text}'"}
+    if "error" in result:
+        return {"error": result["error"]}
     
-    # Process results and collect related images
-    context_parts = []
-    related_images = []
-    
-    for i, (doc, score) in enumerate(results, 1):
-        # Add to context
-        context_parts.append(f"[Result {i} from page {doc.metadata.get('page', 'N/A')}]:\n{doc.page_content}")
+    # Process images for web display
+    web_images = []
+    for img in result.get("related_images", []):
+        # Check if image file exists
+        img_exists = os.path.exists(img['file_path'])
+        # Create web-accessible path
+        web_path = img['file_path'].replace(IMAGES_PATH + '/', '')
         
-        # Collect images
-        images_info = collect_images_from_result(doc)
-        if images_info:
-            related_images.extend(images_info)
-    
-    # Generate response using Ollama
-    context_text = "\n\n---\n\n".join(context_parts)
-    prompt_template = ChatPromptTemplate.from_template(PROMPT_TEMPLATE)
-    prompt = prompt_template.format(context=context_text, question=query_text)
-    
-    try:
-        model = Ollama(model="mistral")
-        response_text = model.invoke(prompt)
-    except Exception as e:
-        print(f"Error generating AI response: {e}")
-        response_text = "Error generating AI response. Showing direct context instead."
-    
-    # Collect unique images
-    unique_images = {}
-    for img in related_images:
-        if img['filename'] not in unique_images:
-            # Check if image file exists
-            img['exists'] = os.path.exists(img['file_path'])
-            # Create web-accessible path
-            img['web_path'] = img['file_path'].replace(IMAGES_PATH + '/', '')
-            unique_images[img['filename']] = img
+        web_images.append({
+            'filename': img['filename'],
+            'file_path': img['file_path'],
+            'web_path': web_path,
+            'page': img.get('page'),
+            'exists': img_exists,
+            'ocr_text': img.get('ocr_text', '')
+        })
     
     return {
         "success": True,
-        "query": query_text,
-        "response": response_text,
-        "images": list(unique_images.values()),
-        "results_count": len(results),
-        "images_count": len(unique_images)
+        "query": result["original_query"],
+        "enhanced_query": result["enhanced_query"],
+        "response": result["response"],
+        "images": web_images,
+        "results_count": result["context_sources"],
+        "images_count": len(web_images),
+        "matched_pieces": result["matched_pieces"],
+        "game_piece_context": result["game_piece_context"]
     }
 
 @app.route('/')
@@ -192,19 +92,43 @@ def health_check():
     """Health check endpoint"""
     return jsonify({
         "status": "healthy",
-        "database_initialized": db is not None,
+        "query_processor_initialized": query_processor is not None,
         "chroma_path_exists": os.path.exists(CHROMA_PATH),
         "images_path_exists": os.path.exists(IMAGES_PATH)
     })
 
-if __name__ == '__main__':
-    print("Initializing FRC RAG Chat Interface...")
+@app.route('/api/suggestions', methods=['POST'])
+def api_suggestions():
+    """API endpoint for getting game piece suggestions"""
+    if not query_processor:
+        return jsonify({"error": "Query processor not initialized"}), 500
     
-    # Initialize database
-    if init_database():
-        print("Database initialized successfully")
+    data = request.get_json()
+    partial_query = data.get('query', '').strip()
+    
+    if not partial_query:
+        return jsonify({"suggestions": []})
+    
+    suggestions = query_processor.get_game_piece_suggestions(partial_query)
+    return jsonify({"suggestions": suggestions})
+
+@app.route('/api/seasons')
+def api_seasons():
+    """API endpoint for getting available seasons"""
+    if not query_processor:
+        return jsonify({"error": "Query processor not initialized"}), 500
+    
+    seasons = query_processor.get_available_seasons()
+    return jsonify({"seasons": seasons})
+
+if __name__ == '__main__':
+    print("Initializing FRC RAG Chat Interface with Enhanced Game Piece Mapping...")
+    
+    # Initialize query processor
+    if init_query_processor():
+        print("Enhanced query processor initialized successfully")
     else:
-        print("Database initialization failed")
+        print("Query processor initialization failed")
     
     print("Starting Flask server...")
     print("Open http://localhost:5000 in your browser")

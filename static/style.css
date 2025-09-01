@@ -433,6 +433,60 @@ body {
     line-height: 1.6;
 }
 
+/* Game Piece Mapping Styles */
+.game-piece-mapping {
+    background: linear-gradient(135deg, #e8f5e8 0%, #f0f8ff 100%);
+    border: 1px solid #4CAF50;
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 12px;
+    font-size: 0.9rem;
+}
+
+.mapping-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+    color: #2e7d32;
+    margin-bottom: 6px;
+}
+
+.mapping-header i {
+    color: #4CAF50;
+}
+
+.mapping-content {
+    color: #1b5e20;
+    line-height: 1.4;
+}
+
+.mapping-content strong {
+    color: #2e7d32;
+    font-weight: 600;
+}
+
+.mapping-content small {
+    color: #555;
+    font-style: italic;
+}
+
+/* Enhanced message styling */
+.assistant-message .game-piece-mapping {
+    animation: fadeInSlide 0.3s ease-out;
+}
+
+@keyframes fadeInSlide {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
 /* Animations */
 @keyframes fadeInUp {
     from {
