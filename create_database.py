@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_compl
 from functools import partial
 import multiprocessing as mp
 import time
+from xml.sax.saxutils import escape
 
 from langchain.schema import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -19,12 +20,17 @@ from langchain_community.vectorstores import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 import pytesseract
 from transformers import BlipProcessor, BlipForConditionalGeneration
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.units import inch
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as RLImage, PageBreak
+from reportlab.lib.styles import getSampleStyleSheet
 
 # Configure paths
 DATA_PATH = "data"
 IMAGES_PATH = os.path.join(DATA_PATH, "images")
 REJECTED_IMAGES_PATH = os.path.join(DATA_PATH, "rejected_images")
 CHROMA_PATH = "db"
+IMAGE_CONTEXTS_PDF_PATH = os.path.join(DATA_PATH, "image_contexts.pdf")
 
 # Parallelization settings
 MAX_PDF_WORKERS = None  # None = auto-detect based on CPU count
@@ -89,6 +95,18 @@ CAPTIONING_MODEL_ID = "Salesforce/blip-image-captioning-large"
 captioning_processor = None
 captioning_model = None
 
+
+def create_context_excerpt(text: str, max_length: int = 1500) -> str:
+    """Return a trimmed version of context text for storage."""
+    if not text:
+        return ""
+
+    cleaned_text = text.strip()
+    if len(cleaned_text) <= max_length:
+        return cleaned_text
+
+    return cleaned_text[: max_length - 3].rstrip() + "..."
+
 def load_captioning_model():
     """
     Load the image captioning model and processor from Hugging Face.
@@ -147,6 +165,10 @@ def main():
         print(f"Removing existing rejected images at {REJECTED_IMAGES_PATH}")
         shutil.rmtree(REJECTED_IMAGES_PATH)
     os.makedirs(REJECTED_IMAGES_PATH)
+
+    if os.path.exists(IMAGE_CONTEXTS_PDF_PATH):
+        print(f"Removing existing image context manifest at {IMAGE_CONTEXTS_PDF_PATH}")
+        os.remove(IMAGE_CONTEXTS_PDF_PATH)
     
     # Find all PDF files in the data directory
     pdf_files = glob.glob(os.path.join(DATA_PATH, "*.pdf"))
@@ -169,6 +191,9 @@ def main():
     print(f"{'='*60}")
     print(f"Total PDFs processed: {len(pdf_files)}")
     print(f"Total documents created: {len(all_documents)}")
+
+    # Persist image-to-context mapping for downstream inspection
+    write_image_context_manifest(all_documents)
     
     # Split text into chunks
     chunks = split_text(all_documents)
@@ -307,6 +332,31 @@ def process_pdf_with_images(pdf_path: str, pdf_images_path: str) -> List[Documen
             
             # Store image info separately for later retrieval
             if image_info:
+                context_excerpt = create_context_excerpt(page_text)
+
+                for img_info in image_info:
+                    image_text = (img_info.get("ocr_text") or "").strip()
+                    context_page_content = (
+                        f"Source document: {pdf_name}, page {page_num + 1}\n"
+                        f"Image file: {img_info['filename']}\n\n"
+                        f"Page context:\n{context_excerpt}\n\n"
+                        f"Extracted image text:\n{image_text if image_text else 'No extracted text available.'}"
+                    )
+
+                    image_context_doc = Document(
+                        page_content=context_page_content,
+                        metadata={
+                            "source": pdf_path,
+                            "page": page_num + 1,
+                            "type": "image_context",
+                            "image_file": img_info["filename"],
+                            "image_path": img_info["file_path"],
+                            "image_text": image_text,
+                            "page_context_excerpt": context_excerpt,
+                        }
+                    )
+                    documents.append(image_context_doc)
+
                 for img_info in image_info:
                     # Create a simple metadata entry for image info
                     img_metadata = {
@@ -807,6 +857,113 @@ def save_to_chroma(chunks: List[Document]):
     )
     
     print(f"Saved {len(filtered_chunks)} chunks to {CHROMA_PATH}")
+
+
+def write_image_context_manifest(documents: List[Document], manifest_path: str = IMAGE_CONTEXTS_PDF_PATH):
+    """Create a PDF manifest capturing each retained image and its associated context."""
+    image_entries: List[Dict[str, Any]] = []
+
+    for doc in documents:
+        if doc.metadata.get("type") != "image_context":
+            continue
+
+        entry = {
+            "image_file": doc.metadata.get("image_file"),
+            "image_path": doc.metadata.get("image_path"),
+            "source_pdf": os.path.basename(doc.metadata.get("source", "")),
+            "page": doc.metadata.get("page"),
+            "image_text": doc.metadata.get("image_text", ""),
+            "page_context_excerpt": doc.metadata.get("page_context_excerpt", ""),
+        }
+        image_entries.append(entry)
+
+    if not image_entries:
+        print("No image context entries to write.")
+        return
+
+    image_entries.sort(
+        key=lambda entry: (
+            entry.get("source_pdf") or "",
+            entry.get("page") or 0,
+            entry.get("image_file") or "",
+        )
+    )
+
+    os.makedirs(os.path.dirname(manifest_path), exist_ok=True)
+
+    stylesheet = getSampleStyleSheet()
+    heading_style = stylesheet["Heading3"]
+    body_style = stylesheet["BodyText"]
+
+    doc_template = SimpleDocTemplate(
+        manifest_path,
+        pagesize=letter,
+        rightMargin=36,
+        leftMargin=36,
+        topMargin=48,
+        bottomMargin=48,
+    )
+
+    story = []
+
+    for idx, entry in enumerate(image_entries, start=1):
+        header_text = (
+            f"Image {idx}: {escape((entry.get('image_file') or 'Unknown'))} "
+            f"(PDF: {escape((entry.get('source_pdf') or 'Unknown'))}, "
+            f"Page: {entry.get('page', 'N/A')})"
+        )
+        story.append(Paragraph(header_text, heading_style))
+        story.append(Spacer(1, 0.15 * inch))
+
+        image_path = entry.get("image_path")
+        added_visual = False
+        if image_path and os.path.exists(image_path):
+            try:
+                with Image.open(image_path) as pil_img:
+                    width, height = pil_img.size
+
+                max_width = 5.5 * inch
+                max_height = 4.5 * inch
+
+                if width and height:
+                    display_width = max_width
+                    display_height = display_width * (height / width)
+
+                    if display_height > max_height:
+                        display_height = max_height
+                        display_width = display_height * (width / height)
+                else:
+                    display_width = max_width
+                    display_height = max_height
+
+                story.append(RLImage(image_path, width=display_width, height=display_height))
+                story.append(Spacer(1, 0.15 * inch))
+                added_visual = True
+            except Exception as exc:
+                message = escape(f"Unable to display image (error: {exc}).")
+                story.append(Paragraph(message, body_style))
+                story.append(Spacer(1, 0.1 * inch))
+
+        if not added_visual:
+            story.append(Paragraph("Image file not available for preview.", body_style))
+            story.append(Spacer(1, 0.1 * inch))
+
+        text_sections = [
+            ("Extracted image text", entry.get("image_text") or "No extracted text available."),
+            ("Page context excerpt", entry.get("page_context_excerpt") or "No page context available."),
+        ]
+
+        for label, content in text_sections:
+            story.append(Paragraph(f"<b>{escape(label)}:</b>", body_style))
+            content_text = escape(str(content)).replace("\n", "<br/>")
+            story.append(Paragraph(content_text, body_style))
+            story.append(Spacer(1, 0.1 * inch))
+
+        if idx != len(image_entries):
+            story.append(PageBreak())
+
+    doc_template.build(story)
+    print(f"Saved {len(image_entries)} image context entries to {manifest_path}")
 
 def test_database():
     """
