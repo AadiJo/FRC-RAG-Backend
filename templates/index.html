@@ -6,6 +6,12 @@
     <title>FRC RAG Chat Assistant</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <!-- Syntax highlighting for code blocks -->
+    <link href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github-dark.min.css" rel="stylesheet">
+    <!-- Markdown renderer and sanitizer -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.9/dist/purify.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/common.min.js"></script>
 </head>
 <body>
     <div class="chat-container">
@@ -171,6 +177,13 @@
 
             textContentDiv.appendChild(textDiv);
 
+            // Syntax highlight any code blocks
+            try {
+                textDiv.querySelectorAll('pre code').forEach((block) => {
+                    if (window.hljs) window.hljs.highlightElement(block);
+                });
+            } catch (e) { /* no-op */ }
+
             // Add images if present
             if (images && images.length > 0) {
                 const imagesDiv = document.createElement('div');
@@ -316,11 +329,19 @@
         }
 
         function formatText(text) {
-            // Simple formatting for line breaks and basic markdown
-            return text
-                .replace(/\n/g, '<br>')
-                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-                .replace(/\*(.*?)\*/g, '<em>$1</em>');
+            // Render Markdown (GFM) and sanitize the HTML output
+            try {
+                marked.setOptions({ gfm: true, breaks: true, headerIds: false, mangle: false });
+                const html = marked.parse(text || '');
+                return DOMPurify.sanitize(html);
+            } catch (err) {
+                const escaped = (text || '')
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/\n/g, '<br>');
+                return escaped;
+            }
         }
 
         function showLoading() {

@@ -246,7 +246,43 @@ body {
     line-height: 1.7;
     font-size: 16px;
     margin: 0;
+    overflow-wrap: anywhere;
+    word-break: break-word;
 }
+
+/* Markdown body styles inside messages */
+.message-text h1,
+.message-text h2,
+.message-text h3,
+.message-text h4 {
+    margin: 18px 0 10px;
+    line-height: 1.3;
+    font-weight: 700;
+}
+.message-text h1 { font-size: 1.8rem; }
+.message-text h2 { font-size: 1.5rem; border-bottom: 1px solid #333; padding-bottom: 4px; }
+.message-text h3 { font-size: 1.25rem; }
+.message-text h4 { font-size: 1.1rem; }
+.message-text p { margin: 10px 0; color: #dcdcdc; }
+.message-text ul, .message-text ol { margin: 10px 0 10px 22px; }
+.message-text li { margin: 6px 0; }
+.message-text blockquote {
+    margin: 12px 0;
+    padding: 10px 12px;
+    border-left: 4px solid #10a37f;
+    background: #2a2a2a;
+    color: #cfcfcf;
+    border-radius: 4px;
+}
+.message-text code { background: #2a2a2a; padding: 2px 6px; border-radius: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 0.95em; }
+.message-text pre { background: #111; border: 1px solid #333; padding: 12px; border-radius: 8px; overflow: auto; margin: 12px 0; }
+.message-text pre code { background: transparent; padding: 0; }
+.message-text table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+.message-text th, .message-text td { border: 1px solid #333; padding: 8px 10px; }
+.message-text th { background: #2a2a2a; text-align: left; }
+.message-text hr { border: none; height: 1px; background: #333; margin: 16px 0; }
+.message-text a { color: #58a6ff; text-decoration: underline; }
+.message-text img { max-width: 100%; height: auto; border-radius: 6px; }
 
 /* Welcome message */
 .welcome-message .message-text {

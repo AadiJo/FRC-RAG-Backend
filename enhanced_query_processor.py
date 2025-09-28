@@ -215,7 +215,7 @@ Instructions:
                 question=query
             )
             
-            model = Ollama(model="mistral")
+            model = Ollama(model="gpt-oss:20b")
             response_text = model.invoke(prompt)
             
         except Exception as e:
