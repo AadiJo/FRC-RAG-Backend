@@ -70,33 +70,30 @@ def check_database():
     return response in ['y', 'yes']
 
 def check_ollama():
-    """Check if Ollama is available"""
-    print("🤖 Checking Ollama service...")
+    """Check if Ollama is available (will be started automatically)"""
+    print("🤖 Ollama will be started automatically when the application launches")
     
     try:
-        # Check if Ollama is running
-        response = requests.get("http://localhost:11434/api/tags", timeout=5)
-        if response.status_code == 200:
-            print("✅ Ollama service is running")
-            
-            # Check if mistral model is available
-            models = response.json().get('models', [])
-            model_names = [model.get('name', '') for model in models]
-            
-            if any('mistral' in name for name in model_names):
-                print("✅ Mistral model is available")
-            else:
-                print("📥 Mistral model not found. You may need to run:")
-                print("   ollama pull mistral")
-        else:
-            print("⚠️  Ollama API returned unexpected status")
-            
-    except requests.exceptions.RequestException:
-        print("⚠️  Ollama service not reachable")
-        print("   Please ensure Ollama is installed and running:")
-        print("   1. Install from: https://ollama.ai/")
-        print("   2. Run: ollama serve")
-        print("   3. Run: ollama pull mistral")
+        # Just check if ollama command exists
+        subprocess.run(['ollama', '--version'], 
+                      capture_output=True, 
+                      check=True, 
+                      timeout=5)
+        print("✅ Ollama is installed and ready")
+        return True
+    except subprocess.CalledProcessError:
+        print("⚠️  Ollama command not working properly")
+        return False
+    except FileNotFoundError:
+        print("❌ Ollama not found. Please install Ollama from https://ollama.ai/")
+        print("   The application will still try to start, but AI features may not work")
+        return False
+    except subprocess.TimeoutExpired:
+        print("⚠️  Ollama command timed out")
+        return False
+    except Exception as e:
+        print(f"⚠️  Error checking Ollama: {e}")
+        return False
 
 def start_web_server(python_exe):
     """Start the Flask web server"""
@@ -142,7 +139,7 @@ def main():
     if not check_database():
         sys.exit(1)
     
-    # Check Ollama
+    # Check Ollama (but continue regardless since it will be started automatically)
     check_ollama()
     
     # Start web server

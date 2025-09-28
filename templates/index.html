@@ -16,16 +16,16 @@
                     <div class="logo-placeholder">
                         <i class="fas fa-robot"></i>
                     </div>
-                    <span class="logo-text">FRC RAG</span>
+                    <div class="logo-text">FRC RAG</div>
                 </div>
                 <button class="new-chat-btn">
                     <i class="fas fa-plus"></i>
-                    <span>New chat</span>
+                    New Chat
                 </button>
             </div>
             <div class="sidebar-content">
                 <div class="chat-history">
-                    <!-- Chat history items would go here -->
+                    <!-- Chat history will go here -->
                 </div>
             </div>
             <div class="sidebar-footer">
@@ -33,7 +33,7 @@
                     <div class="user-avatar">
                         <i class="fas fa-user"></i>
                     </div>
-                    <span class="user-name">User</span>
+                    <span>User</span>
                 </div>
             </div>
         </div>
@@ -47,7 +47,7 @@
                         <i class="fas fa-bars"></i>
                     </button>
                     <div class="header-title">
-                        <h1>FRC RAG Assistant</h1>
+                        <h1>FRC RAG Chat Assistant</h1>
                     </div>
                 </div>
             </div>
@@ -61,24 +61,24 @@
                                 <i class="fas fa-robot"></i>
                             </div>
                         </div>
-                        <div class="message-text">
-                            <h3>Welcome to the Enhanced FRC RAG Assistant! 🤖⚙️</h3>
-                            <p>I can help you search through your FRC documentation with intelligent game piece mapping. Try asking about:</p>
-                            <ul>
-                                <li><strong>Generic terms:</strong> "How to pick up a ball?" → Maps to Algae, Cargo, Power Cells</li>
-                                <li><strong>Shape-based:</strong> "cube intake mechanism" → Maps to Cubes, Coral blocks</li>
-                                <li><strong>Ring/donut:</strong> "ring scoring strategies" → Maps to Notes from Crescendo</li>
-                                <li><strong>Cone handling:</strong> "traffic cone gripper" → Maps to Cones from Charged Up</li>
-                                <li><strong>Season-specific:</strong> "2025 game pieces" → Algae and Coral from Reefscape</li>
-                            </ul>
-                            <p><strong>New Features:</strong></p>
-                            <ul>
-                                <li>🎯 Smart game piece recognition (ball → algae, cube → coral, etc.)</li>
-                                <li>📅 Multi-season context (2020-2025)</li>
-                                <li>🔍 Enhanced search with game piece properties</li>
-                                <li>📊 Detailed game piece specifications and handling tips</li>
-                            </ul>
-                            <p>Type your question below - use natural language and I'll understand!</p>
+                        <div class="message-text-container">
+                            <div class="message-text">
+                                <h3>Welcome to FRC RAG Chat Assistant! 🤖</h3>
+                                <p>I can help you with First Robotics Competition questions using data from team technical binders. Here's what I can do:</p>
+                                <ul>
+                                    <li><strong>Answer technical questions</strong> about FRC robots, mechanisms, and strategies</li>
+                                    <li><strong>Find relevant images</strong> from team documentation</li>
+                                    <li><strong>Explain game pieces and mechanisms</strong> with enhanced context</li>
+                                    <li><strong>Provide detailed analysis</strong> based on team technical documentation</li>
+                                </ul>
+                                <p>Try asking me something like:</p>
+                                <ul>
+                                    <li>"How do teams handle ground intake?"</li>
+                                    <li>"Show me swerve drive implementations"</li>
+                                    <li>"What are common scoring mechanisms?"</li>
+                                </ul>
+                                <p><strong>Just type your question below to get started!</strong></p>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -88,14 +88,9 @@
             <div class="chat-input-container">
                 <div class="chat-input-wrapper">
                     <div class="input-area">
-                        <input 
-                            type="text" 
-                            id="messageInput" 
-                            placeholder="Message FRC RAG Assistant..."
-                            autocomplete="off"
-                        >
-                        <button id="sendButton" type="button">
-                            <i class="fas fa-arrow-up"></i>
+                        <textarea id="messageInput" placeholder="Ask me anything about FRC..."></textarea>
+                        <button id="sendButton">
+                            <i class="fas fa-paper-plane"></i>
                         </button>
                     </div>
                 </div>
@@ -124,6 +119,244 @@
     </div>
 
     <script>
+        // Function declarations first (hoisted)
+        function addMessage(text, sender, images = [], isError = false, enhancedData = null) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${sender}-message${isError ? ' error-message' : ''}`;
+
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content';
+
+            const avatarDiv = document.createElement('div');
+            avatarDiv.className = 'message-avatar';
+            if (sender === 'user') {
+                avatarDiv.innerHTML = '<div class="user-avatar"><i class="fas fa-user"></i></div>';
+            } else {
+                avatarDiv.innerHTML = '<div class="assistant-avatar"><i class="fas fa-robot"></i></div>';
+            }
+
+            const textContentDiv = document.createElement('div');
+            textContentDiv.className = 'message-text-container';
+
+            // Add game piece mapping info if available
+            if (enhancedData && enhancedData.matched_pieces) {
+                // Handle matched_pieces as either string or array
+                let matchedPiecesText = '';
+                if (Array.isArray(enhancedData.matched_pieces)) {
+                    matchedPiecesText = enhancedData.matched_pieces.join(', ');
+                } else {
+                    matchedPiecesText = enhancedData.matched_pieces.toString();
+                }
+                
+                if (matchedPiecesText.trim()) {
+                    const mappingDiv = document.createElement('div');
+                    mappingDiv.className = 'game-piece-mapping';
+                    mappingDiv.innerHTML = `
+                        <div class="mapping-header">
+                            <i class="fas fa-link"></i> Game Piece Mapping
+                        </div>
+                        <div class="mapping-content">
+                            Detected: <strong>${matchedPiecesText}</strong>
+                            ${enhancedData.enhanced_query !== enhancedData.query ? 
+                                `<br><small>Enhanced search: "${enhancedData.enhanced_query}"</small>` : ''}
+                        </div>
+                    `;
+                    textContentDiv.appendChild(mappingDiv);
+                }
+            }
+
+            const textDiv = document.createElement('div');
+            textDiv.className = 'message-text';
+            textDiv.innerHTML = formatText(text);
+
+            textContentDiv.appendChild(textDiv);
+
+            // Add images if present
+            if (images && images.length > 0) {
+                const imagesDiv = document.createElement('div');
+                imagesDiv.className = 'message-images';
+                
+                const imageHeader = document.createElement('div');
+                imageHeader.className = 'image-header';
+                imageHeader.innerHTML = `<i class="fas fa-images"></i> Related Images (${images.length})`;
+                imagesDiv.appendChild(imageHeader);
+
+                const imageGrid = document.createElement('div');
+                imageGrid.className = 'image-grid';
+
+                images.forEach((image, index) => {
+                    const imageItem = createImageItem(image, index);
+                    imageGrid.appendChild(imageItem);
+                });
+
+                imagesDiv.appendChild(imageGrid);
+                textContentDiv.appendChild(imagesDiv);
+            }
+
+            contentDiv.appendChild(avatarDiv);
+            contentDiv.appendChild(textContentDiv);
+
+            messageDiv.appendChild(contentDiv);
+
+            const chatMessages = document.getElementById('chatMessages');
+            chatMessages.appendChild(messageDiv);
+            scrollToBottom();
+        }
+
+        function createImageItem(image, index) {
+            const imageDiv = document.createElement('div');
+            imageDiv.className = 'image-item';
+
+            if (image.exists) {
+                // Create image container for better hover behavior
+                const imgContainer = document.createElement('div');
+                imgContainer.className = 'image-thumbnail-container';
+                
+                const img = document.createElement('img');
+                img.src = `/images/${image.web_path}`;
+                img.alt = image.filename;
+                img.className = 'image-thumbnail';
+                
+                const overlay = document.createElement('div');
+                overlay.className = 'image-overlay';
+                overlay.innerHTML = `
+                    <i class="fas fa-search-plus"></i>
+                    <span>Click to view</span>
+                `;
+                
+                // Add click event to container for better handling
+                const clickHandler = () => openImageModal(image);
+                imgContainer.addEventListener('click', clickHandler);
+                
+                imgContainer.appendChild(img);
+                imgContainer.appendChild(overlay);
+                imageDiv.appendChild(imgContainer);
+            } else {
+                imageDiv.className += ' image-not-found';
+                imageDiv.innerHTML = `
+                    <div class="image-placeholder">
+                        <i class="fas fa-image"></i>
+                        <span>Image not found</span>
+                    </div>
+                `;
+            }
+
+            const infoDiv = document.createElement('div');
+            infoDiv.className = 'image-info';
+            
+            // Create the basic info section
+            const basicInfo = document.createElement('div');
+            basicInfo.className = 'image-basic-info';
+            basicInfo.innerHTML = `
+                <div class="image-filename">${getTeamDisplayName(image.web_path || image.file_path)}</div>
+                <div class="image-page">Page ${image.page || 'N/A'}</div>
+            `;
+            infoDiv.appendChild(basicInfo);
+            
+            // Add context summary if available with improved formatting
+            if (image.context_summary && image.context_summary.trim()) {
+                const contextDiv = document.createElement('div');
+                contextDiv.className = 'image-context-summary';
+                
+                // Truncate long context for better display
+                let contextText = image.context_summary.trim();
+                if (contextText.length > 120) {
+                    contextText = contextText.substring(0, 120) + '...';
+                }
+                
+                contextDiv.innerHTML = `
+                    <div class="context-label"><i class="fas fa-info-circle"></i> Context</div>
+                    <div class="context-text">${contextText}</div>
+                `;
+                infoDiv.appendChild(contextDiv);
+            }
+            
+            // Make info div clickable but prevent event bubbling issues
+            infoDiv.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (image.exists) {
+                    openImageModal(image);
+                }
+            });
+
+            imageDiv.appendChild(infoDiv);
+            return imageDiv;
+        }
+
+        function openImageModal(image) {
+            const imageModal = document.getElementById('imageModal');
+            const modalImage = document.getElementById('modalImage');
+            const modalTitle = document.getElementById('modalTitle');
+            const modalDescription = document.getElementById('modalDescription');
+            
+            console.log('Opening modal for image:', image.filename);
+            modalImage.src = `/images/${image.web_path}`;
+            modalTitle.textContent = getTeamDisplayName(image.web_path || image.file_path);
+            
+            let modalContent = `
+                <strong>Page:</strong> ${image.page || 'N/A'}<br>
+                <strong>Path:</strong> ${image.file_path}<br>
+            `;
+            
+            // Show formatted context if available, otherwise fall back to OCR text
+            if (image.formatted_context && image.formatted_context.trim()) {
+                modalContent += `<div class="formatted-context"><strong>Context:</strong><br><pre class="context-content">${image.formatted_context}</pre></div>`;
+            } else if (image.ocr_text && image.ocr_text.trim()) {
+                modalContent += `<div class="formatted-context"><strong>OCR Text:</strong><br><pre class="context-content">${image.ocr_text}</pre></div>`;
+            }
+            
+            modalDescription.innerHTML = modalContent;
+            imageModal.style.display = 'block';
+            console.log('Modal should now be visible');
+        }
+
+        function closeModal() {
+            const imageModal = document.getElementById('imageModal');
+            imageModal.style.display = 'none';
+        }
+
+        function formatText(text) {
+            // Simple formatting for line breaks and basic markdown
+            return text
+                .replace(/\n/g, '<br>')
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                .replace(/\*(.*?)\*/g, '<em>$1</em>');
+        }
+
+        function showLoading() {
+            const loadingOverlay = document.getElementById('loadingOverlay');
+            loadingOverlay.style.display = 'flex';
+        }
+
+        function hideLoading() {
+            const loadingOverlay = document.getElementById('loadingOverlay');
+            loadingOverlay.style.display = 'none';
+        }
+
+        function scrollToBottom() {
+            const chatMessages = document.getElementById('chatMessages');
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        function getTeamDisplayName(imagePath) {
+            // Extract team number from the file path
+            // Path format: "1323-2025/page0_img1.png" or "data/images/1323-2025/page0_img1.png"
+            const pathParts = imagePath.split('/');
+            
+            // Find the folder that contains team number (format: XXXX-YYYY)
+            for (let part of pathParts) {
+                // Match pattern like "1323-2025" (team number followed by year)
+                const match = part.match(/^(\d+)-(\d{4})$/);
+                if (match) {
+                    const teamNumber = match[1];
+                    return `FRC ${teamNumber}`;
+                }
+            }
+            
+            // Fallback to original filename if no team pattern found
+            return imagePath.split('/').pop();
+        }
+
         // DOM Elements
         const chatMessages = document.getElementById('chatMessages');
         const messageInput = document.getElementById('messageInput');
@@ -155,7 +388,6 @@
             console.log('Key pressed:', e.key);
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
-                console.log('Enter pressed, sending message...');
                 sendMessage();
             }
         });
@@ -197,7 +429,10 @@
                 body: JSON.stringify({ query: message })
             })
             .then(response => {
-                console.log('Response received:', response);
+                console.log('Response received:', response.status, response.statusText);
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
                 return response.json();
             })
             .then(data => {
@@ -210,192 +445,10 @@
                 }
             })
             .catch(error => {
-                console.error('Error:', error);
+                console.error('Detailed error:', error);
                 hideLoading();
-                addMessage('Sorry, there was an error processing your request. Please try again.', 'assistant', [], true);
+                addMessage(`Error: ${error.message || error}. Check browser console for details.`, 'assistant', [], true);
             });
-        }
-
-        function addMessage(text, sender, images = [], isError = false, enhancedData = null) {
-            const messageDiv = document.createElement('div');
-            messageDiv.className = `message ${sender}-message${isError ? ' error-message' : ''}`;
-
-            const contentDiv = document.createElement('div');
-            contentDiv.className = 'message-content';
-
-            const avatarDiv = document.createElement('div');
-            avatarDiv.className = 'message-avatar';
-            if (sender === 'user') {
-                avatarDiv.innerHTML = '<div class="user-avatar"><i class="fas fa-user"></i></div>';
-            } else {
-                avatarDiv.innerHTML = '<div class="assistant-avatar"><i class="fas fa-robot"></i></div>';
-            }
-
-            const textContentDiv = document.createElement('div');
-            textContentDiv.className = 'message-text-container';
-
-            // Add game piece mapping info if available
-            if (enhancedData && enhancedData.matched_pieces && enhancedData.matched_pieces.length > 0) {
-                const mappingDiv = document.createElement('div');
-                mappingDiv.className = 'game-piece-mapping';
-                mappingDiv.innerHTML = `
-                    <div class="mapping-header">
-                        <i class="fas fa-link"></i> Game Piece Mapping
-                    </div>
-                    <div class="mapping-content">
-                        Detected: <strong>${enhancedData.matched_pieces.join(', ')}</strong>
-                        ${enhancedData.enhanced_query !== enhancedData.query ? 
-                            `<br><small>Enhanced search: "${enhancedData.enhanced_query}"</small>` : ''}
-                    </div>
-                `;
-                textContentDiv.appendChild(mappingDiv);
-            }
-
-            const textDiv = document.createElement('div');
-            textDiv.className = 'message-text';
-            textDiv.innerHTML = formatText(text);
-
-            textContentDiv.appendChild(textDiv);
-
-            // Add images if present
-            if (images && images.length > 0) {
-                const imagesDiv = document.createElement('div');
-                imagesDiv.className = 'message-images';
-                
-                const imageHeader = document.createElement('div');
-                imageHeader.className = 'image-header';
-                imageHeader.innerHTML = `<i class="fas fa-images"></i> Related Images (${images.length})`;
-                imagesDiv.appendChild(imageHeader);
-
-                const imageGrid = document.createElement('div');
-                imageGrid.className = 'image-grid';
-
-                images.forEach((image, index) => {
-                    const imageItem = createImageItem(image, index);
-                    imageGrid.appendChild(imageItem);
-                });
-
-                imagesDiv.appendChild(imageGrid);
-                textContentDiv.appendChild(imagesDiv);
-            }
-
-            contentDiv.appendChild(avatarDiv);
-            contentDiv.appendChild(textContentDiv);
-
-            messageDiv.appendChild(contentDiv);
-
-            chatMessages.appendChild(messageDiv);
-            scrollToBottom();
-        }
-
-        function createImageItem(image, index) {
-            const imageDiv = document.createElement('div');
-            imageDiv.className = 'image-item';
-
-            if (image.exists) {
-                const img = document.createElement('img');
-                img.src = `/images/${image.web_path}`;
-                img.alt = image.filename;
-                img.className = 'image-thumbnail';
-                
-                const overlay = document.createElement('div');
-                overlay.className = 'image-overlay';
-                overlay.innerHTML = `
-                    <i class="fas fa-search-plus"></i>
-                    <span>Click to view</span>
-                `;
-                
-                // Add click event to both image and overlay
-                const clickHandler = () => openImageModal(image);
-                img.addEventListener('click', clickHandler);
-                overlay.addEventListener('click', clickHandler);
-                imageDiv.addEventListener('click', clickHandler);
-                
-                imageDiv.appendChild(img);
-                imageDiv.appendChild(overlay);
-            } else {
-                imageDiv.className += ' image-not-found';
-                imageDiv.innerHTML = `
-                    <div class="image-placeholder">
-                        <i class="fas fa-image"></i>
-                        <span>Image not found</span>
-                    </div>
-                `;
-            }
-
-            const infoDiv = document.createElement('div');
-            infoDiv.className = 'image-info';
-            infoDiv.innerHTML = `
-                <div class="image-filename">${getTeamDisplayName(image.web_path || image.file_path)}</div>
-                <div class="image-page">Page ${image.page || 'N/A'}</div>
-            `;
-            
-            // Prevent info div from triggering modal when clicked
-            infoDiv.addEventListener('click', (e) => {
-                if (image.exists) {
-                    e.stopPropagation();
-                    openImageModal(image);
-                }
-            });
-
-            imageDiv.appendChild(infoDiv);
-            return imageDiv;
-        }
-
-        function openImageModal(image) {
-            console.log('Opening modal for image:', image.filename);
-            modalImage.src = `/images/${image.web_path}`;
-            modalTitle.textContent = getTeamDisplayName(image.web_path || image.file_path);
-            modalDescription.innerHTML = `
-                <strong>Page:</strong> ${image.page || 'N/A'}<br>
-                <strong>Path:</strong> ${image.file_path}<br>
-                ${image.ocr_text ? `<strong>Content:</strong> ${image.ocr_text}` : ''}
-            `;
-            imageModal.style.display = 'block';
-            console.log('Modal should now be visible');
-        }
-
-        function closeModal() {
-            imageModal.style.display = 'none';
-        }
-
-        function formatText(text) {
-            // Simple formatting for line breaks and basic markdown
-            return text
-                .replace(/\n/g, '<br>')
-                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-                .replace(/\*(.*?)\*/g, '<em>$1</em>');
-        }
-
-        function showLoading() {
-            loadingOverlay.style.display = 'flex';
-        }
-
-        function hideLoading() {
-            loadingOverlay.style.display = 'none';
-        }
-
-        function scrollToBottom() {
-            chatMessages.scrollTop = chatMessages.scrollHeight;
-        }
-
-        function getTeamDisplayName(imagePath) {
-            // Extract team number from the file path
-            // Path format: "1323-2025/page0_img1.png" or "data/images/1323-2025/page0_img1.png"
-            const pathParts = imagePath.split('/');
-            
-            // Find the folder that contains team number (format: XXXX-YYYY)
-            for (let part of pathParts) {
-                // Match pattern like "1323-2025" (team number followed by year)
-                const match = part.match(/^(\d+)-(\d{4})$/);
-                if (match) {
-                    const teamNumber = match[1];
-                    return `FRC ${teamNumber}`;
-                }
-            }
-            
-            // Fallback to original filename if no team pattern found
-            return imagePath.split('/').pop();
         }
 
         // Initialize

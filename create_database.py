@@ -58,6 +58,11 @@ IRRELEVANT_KEYWORDS = [
     'banner', 'poster', 'logo only', 'team logo', 'sponsor logo', 'title page',
     'cover page', 'intro page', 'welcome', 'introduction', 'about us',
     
+    # Logo and branding content
+    'logo', 'brand', 'branding', 'emblem', 'badge', 'trademark', 'copyright',
+    'company logo', 'organization logo', 'first logo', 'frc logo', 'competition logo',
+    'sponsor badge', 'team badge', 'team emblem', 'corporate logo', 'brand mark',
+    
     # Generic/decorative content
     'decorative', 'background', 'pattern', 'texture', 'gradient', 'abstract',
     'clip art', 'stock photo', 'generic image', 'filler image'
@@ -106,6 +111,51 @@ def create_context_excerpt(text: str, max_length: int = 1500) -> str:
         return cleaned_text
 
     return cleaned_text[: max_length - 3].rstrip() + "..."
+
+def format_image_context(img_info: Dict[str, Any], pdf_name: str, page_num: int, page_context: str) -> str:
+    """
+    Format image context with consistent styling and comprehensive information.
+    """
+    image_text = (img_info.get("ocr_text") or "").strip()
+    filename = img_info.get("filename", "Unknown")
+    
+    # Create a standardized context format
+    context_parts = [
+        f"📄 **Document**: {pdf_name}",
+        f"📖 **Page**: {page_num + 1}",
+        f"🖼️ **Image**: {filename}",
+        f"📏 **Dimensions**: {img_info.get('size', 'Unknown')}",
+        ""
+    ]
+    
+    # Add extracted content section
+    if image_text:
+        context_parts.extend([
+            "🔍 **Extracted Content**:",
+            image_text,
+            ""
+        ])
+    else:
+        context_parts.extend([
+            "🔍 **Extracted Content**: No readable text detected",
+            ""
+        ])
+    
+    # Add page context section
+    if page_context:
+        context_parts.extend([
+            "📝 **Page Context**:",
+            page_context,
+            ""
+        ])
+    
+    # Add technical classification
+    context_parts.extend([
+        "🔧 **Classification**: Technical diagram/image relevant to robotics",
+        f"⚙️ **Content Type**: {'Text-based' if image_text else 'Visual-only'}"
+    ])
+    
+    return "\n".join(context_parts)
 
 def load_captioning_model():
     """
@@ -336,15 +386,12 @@ def process_pdf_with_images(pdf_path: str, pdf_images_path: str) -> List[Documen
 
                 for img_info in image_info:
                     image_text = (img_info.get("ocr_text") or "").strip()
-                    context_page_content = (
-                        f"Source document: {pdf_name}, page {page_num + 1}\n"
-                        f"Image file: {img_info['filename']}\n\n"
-                        f"Page context:\n{context_excerpt}\n\n"
-                        f"Extracted image text:\n{image_text if image_text else 'No extracted text available.'}"
-                    )
+                    
+                    # Use standardized formatting for consistent image context
+                    formatted_context = format_image_context(img_info, pdf_name, page_num, context_excerpt)
 
                     image_context_doc = Document(
-                        page_content=context_page_content,
+                        page_content=formatted_context,
                         metadata={
                             "source": pdf_path,
                             "page": page_num + 1,
@@ -353,6 +400,7 @@ def process_pdf_with_images(pdf_path: str, pdf_images_path: str) -> List[Documen
                             "image_path": img_info["file_path"],
                             "image_text": image_text,
                             "page_context_excerpt": context_excerpt,
+                            "formatted_context": formatted_context,  # Store formatted version
                         }
                     )
                     documents.append(image_context_doc)
@@ -541,6 +589,12 @@ def process_single_image_ocr(image_data: Dict[str, Any], page_context: Dict[str,
         if not image_text.strip() and has_meaningful_content(pil_image):
             image_text = "Meaningful visual content without readable text."
 
+        # Check for logo content - reject if detected
+        if is_likely_logo(pil_image, image_text):
+            reason = f"OCR text indicates logo content: {image_text[:100]}..."
+            move_to_rejected(file_path, reason)
+            return None
+
         # Filter based on OCR/caption content
         if len(image_text) < MIN_OCR_CHARS:
             reason = "No meaningful text content from OCR or captioning"
@@ -621,6 +675,25 @@ def is_useful_image(pil_image: Image.Image) -> bool:
         return False
     
     return True
+
+def is_likely_logo(pil_image: Image.Image, ocr_text: str = "") -> bool:
+    """
+    Detect if an image is likely a logo based on OCR text mentioning logo explicitly
+    """
+    if not ocr_text:
+        return False
+    
+    ocr_lower = ocr_text.lower()
+    
+    # Check if the OCR text explicitly mentions it's a logo
+    logo_phrases = [
+        'logo', 'company logo', 'team logo', 'sponsor logo', 'brand logo',
+        'official logo', 'organization logo', 'corporate logo', 'logo design',
+        'logo image', 'brand mark', 'trademark', 'registered trademark'
+    ]
+    
+    # Return True if any logo phrase is found in the OCR text
+    return any(phrase in ocr_lower for phrase in logo_phrases)
 
 def has_meaningful_content(pil_image: Image.Image) -> bool:
     """

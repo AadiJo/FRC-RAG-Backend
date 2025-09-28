@@ -1,10 +1,12 @@
 import os
 import json
 from flask import Flask, render_template, request, jsonify, send_from_directory
+from flask_cors import CORS
 from typing import List, Dict, Any
 from enhanced_query_processor import EnhancedQueryProcessor
 
 app = Flask(__name__)
+CORS(app)  # Enable CORS for all routes
 
 # Configuration
 CHROMA_PATH = "db"  # Updated to match create_database.py
@@ -48,7 +50,9 @@ def query_database(query_text: str, k: int = 5) -> Dict[str, Any]:
             'web_path': web_path,
             'page': img.get('page'),
             'exists': img_exists,
-            'ocr_text': img.get('ocr_text', '')
+            'ocr_text': img.get('ocr_text', ''),
+            'formatted_context': img.get('formatted_context', ''),
+            'context_summary': img.get('context_summary', img.get('ocr_text', '')[:200] + ('...' if len(img.get('ocr_text', '')) > 200 else ''))
         })
     
     return {
@@ -71,16 +75,26 @@ def index():
 @app.route('/api/query', methods=['POST'])
 def api_query():
     """API endpoint for processing queries"""
-    data = request.get_json()
-    query_text = data.get('query', '').strip()
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No JSON data provided"}), 400
+            
+        query_text = data.get('query', '').strip()
+        
+        if not query_text:
+            return jsonify({"error": "Query text is required"}), 400
+        
+        k = data.get('k', 5)
+        result = query_database(query_text, k)
+        
+        return jsonify(result)
     
-    if not query_text:
-        return jsonify({"error": "Query text is required"}), 400
-    
-    k = data.get('k', 5)
-    result = query_database(query_text, k)
-    
-    return jsonify(result)
+    except Exception as e:
+        print(f"Error in api_query: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 @app.route('/images/<path:filepath>')
 def serve_image(filepath):
