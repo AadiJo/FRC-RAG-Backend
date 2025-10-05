@@ -119,6 +119,13 @@ def static_files(filename):
     """Serve static files"""
     return send_from_directory('static', filename)
 
+@app.route('/images/<path:filename>')
+def serve_images(filename):
+    """Serve image files from data/images directory"""
+    import os
+    images_dir = os.path.join(os.path.dirname(__file__), 'data', 'images')
+    return send_from_directory(images_dir, filename)
+
 # API Routes - Proxy to local PC
 @app.route('/api/query', methods=['POST'])
 def query():
