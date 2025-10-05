@@ -1,5 +1,5 @@
 """
-Enhanced Query Processor - Integrates game piece mapping with RAG system
+Query Processor - Integrates game piece mapping with RAG system
 This module processes user queries and modify them with game piece context
 """
 
@@ -12,9 +12,9 @@ from langchain_community.vectorstores import Chroma
 from langchain.prompts import ChatPromptTemplate
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.llms import Ollama
-from game_piece_mapper import GamePieceMapper
+from .game_piece_mapper import GamePieceMapper
 
-class EnhancedQueryProcessor:
+class QueryProcessor:
     def __init__(self, chroma_path: str = "db", images_path: str = "data/images"):
         self.chroma_path = chroma_path
         self.images_path = images_path
