@@ -253,7 +253,6 @@ body {
 /* Markdown body styles inside messages */
 .message-text h1,
 .message-text h2,
-.message-text h3,
 .message-text h4 {
     margin: 18px 0 10px;
     line-height: 1.3;
@@ -261,9 +260,9 @@ body {
 }
 .message-text h1 { font-size: 1.8rem; }
 .message-text h2 { font-size: 1.5rem; border-bottom: 1px solid #333; padding-bottom: 4px; }
-.message-text h3 { font-size: 1.25rem; }
+.message-text h3 { font-size: 1.25rem; margin: 0; }
 .message-text h4 { font-size: 1.1rem; }
-.message-text p { margin: 10px 0; color: #dcdcdc; }
+.message-text p { margin: 4px 0; color: #dcdcdc; }
 .message-text ul, .message-text ol { margin: 10px 0 10px 22px; }
 .message-text li { margin: 6px 0; }
 .message-text blockquote {
@@ -291,8 +290,11 @@ body {
 
 .welcome-message h3 {
     color: #10a37f;
-    margin-bottom: 16px;
+    margin: 0;
     font-size: 20px;
+}
+.user-message .message-text p {
+    margin: 0;
 }
 
 .welcome-message ul {
