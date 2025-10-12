@@ -10,7 +10,7 @@ import time
 import logging
 from datetime import datetime
 from typing import Dict, Any
-from flask import Flask, render_template, request, jsonify, send_from_directory
+from flask import Flask, render_template, request, jsonify, send_from_directory, Response, stream_with_context
 from flask_cors import CORS
 from werkzeug.exceptions import TooManyRequests
 
@@ -201,6 +201,81 @@ def api_query():
         return jsonify({"error": str(e)}), 401
     except Exception as e:
         logger.error(f"Error in api_query: {e}", exc_info=True)
+        return jsonify({"error": f"Server error: {str(e)}"}), 500
+
+@app.route('/api/query/stream', methods=['POST'])
+def api_query_stream():
+    """Streaming query endpoint for real-time response generation"""
+    try:
+        # Check API key if required
+        auth_error = require_api_key()
+        if auth_error:
+            return auth_error
+        
+        client_id = ollama_proxy.get_client_id(request)
+        
+        # Check rate limit
+        if not ollama_proxy.rate_limiter.is_allowed(client_id):
+            client_stats = ollama_proxy.rate_limiter.get_client_stats(client_id)
+            return jsonify({
+                "error": "Rate limit exceeded",
+                "rate_limit": client_stats,
+                "timestamp": datetime.now().isoformat()
+            }), 429
+        
+        # Process request
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No JSON data provided"}), 400
+            
+        query_text = data.get('query', '').strip()
+        
+        if not query_text:
+            return jsonify({"error": "Query text is required"}), 400
+        
+        if not query_processor:
+            return jsonify({"error": "Query processor not initialized"}), 500
+        
+        k = data.get('k', 5)
+        
+        def generate():
+            """Generator function for streaming responses"""
+            try:
+                # First, send metadata (images, matched pieces, etc.)
+                metadata = query_processor.prepare_query_metadata(query_text, k)
+                
+                if "error" in metadata:
+                    yield f"data: {json.dumps({'error': metadata['error']})}\n\n"
+                    return
+                
+                # Send metadata event
+                yield f"data: {json.dumps({'type': 'metadata', 'data': metadata})}\n\n"
+                
+                # Stream the response
+                for chunk in query_processor.stream_query_response(query_text, metadata):
+                    yield f"data: {json.dumps({'type': 'content', 'data': chunk})}\n\n"
+                
+                # Send completion event
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                
+            except Exception as e:
+                logger.error(f"Error in stream generation: {e}", exc_info=True)
+                yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+        
+        return Response(
+            stream_with_context(generate()),
+            mimetype='text/event-stream',
+            headers={
+                'Cache-Control': 'no-cache',
+                'X-Accel-Buffering': 'no',
+                'Connection': 'keep-alive'
+            }
+        )
+        
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 401
+    except Exception as e:
+        logger.error(f"Error in api_query_stream: {e}", exc_info=True)
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 @app.route('/api/ollama/<path:path>', methods=['GET', 'POST'])

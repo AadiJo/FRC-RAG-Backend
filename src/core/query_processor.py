@@ -525,4 +525,138 @@ Instructions:
             self.query_cache.remove_expired()
             print("✅ Expired cache entries removed")
         else:
-            print("⚠️  Cache is disabled")
+            print("⚠️  Cache is disabled")    
+    def prepare_query_metadata(self, query: str, k: int = 5) -> Dict[str, Any]:
+        """
+        Prepare metadata for a query (images, matched pieces, etc.) without generating the response.
+        This is used for streaming to send metadata first.
+        """
+        # Step 1: Enhance query with game piece context
+        matched_pieces, enhanced_query = self.game_piece_mapper.enhance_query(query)
+        
+        # Ensure enhanced_query is a string
+        if isinstance(enhanced_query, list):
+            enhanced_query = ' '.join(str(item) for item in enhanced_query) if enhanced_query else query
+        elif not isinstance(enhanced_query, str):
+            enhanced_query = str(enhanced_query) if enhanced_query else query
+        
+        if not enhanced_query.strip():
+            enhanced_query = query
+        
+        # Step 2: Search database with enhanced query
+        try:
+            enhanced_embedding = None
+            if self.enable_cache and self.chunk_cache:
+                try:
+                    enhanced_embedding = np.array(self.embedding_function.embed_query(enhanced_query))
+                    cached_chunks = self.chunk_cache.get(enhanced_embedding, k)
+                    if cached_chunks is not None:
+                        results = cached_chunks
+                    else:
+                        results = self.db.similarity_search(enhanced_query, k=k)
+                        self.chunk_cache.set(enhanced_embedding, k, results)
+                except Exception as e:
+                    results = self.db.similarity_search(enhanced_query, k=k)
+            else:
+                results = self.db.similarity_search(enhanced_query, k=k)
+        except Exception as e:
+            return {"error": f"Search failed: {e}"}
+        
+        if not results:
+            return {
+                "matched_pieces": matched_pieces,
+                "enhanced_query": enhanced_query,
+                "original_query": query,
+                "context_sources": 0,
+                "images": [],
+                "game_piece_context": "",
+                "context_parts": []
+            }
+        
+        # Step 3: Collect related images and prepare context
+        related_images = []
+        context_parts = []
+        
+        for doc in results:
+            context_parts.append(doc.page_content)
+            images = self._collect_images_from_result(doc)
+            related_images.extend(images)
+        
+        # Remove duplicate images
+        seen_filenames = set()
+        unique_images = []
+        for img in related_images:
+            if img['filename'] not in seen_filenames:
+                unique_images.append(img)
+                seen_filenames.add(img['filename'])
+        
+        # Process images for web display
+        from ..server.config import get_config
+        Config = get_config()
+        
+        web_images = []
+        for img in unique_images:
+            img_exists = os.path.exists(img['file_path'])
+            web_path = img['file_path'].replace(Config.IMAGES_PATH + '/', '')
+            
+            web_images.append({
+                'filename': img['filename'],
+                'file_path': img['file_path'],
+                'web_path': web_path,
+                'page': img.get('page'),
+                'exists': img_exists,
+                'ocr_text': img.get('ocr_text', ''),
+                'formatted_context': img.get('formatted_context', ''),
+                'context_summary': img.get('context_summary', img.get('ocr_text', '')[:200] + ('...' if len(img.get('ocr_text', '')) > 200 else ''))
+            })
+        
+        # Generate game piece context
+        game_piece_context = ""
+        if matched_pieces:
+            game_piece_context = self.game_piece_mapper.get_context_for_pieces(matched_pieces)
+        
+        return {
+            "matched_pieces": matched_pieces,
+            "enhanced_query": enhanced_query,
+            "original_query": query,
+            "context_sources": len(results),
+            "images": web_images,
+            "images_count": len(web_images),
+            "game_piece_context": game_piece_context,
+            "context_parts": context_parts
+        }
+    
+    def stream_query_response(self, query: str, metadata: Dict[str, Any]):
+        """
+        Stream the LLM response for a query.
+        Yields chunks of text as they're generated.
+        """
+        context_text = "\n\n---\n\n".join(metadata['context_parts'])
+        game_piece_context = metadata.get('game_piece_context', '')
+        
+        try:
+            prompt_template = ChatPromptTemplate.from_template(self.prompt_template)
+            prompt = prompt_template.format(
+                context=context_text,
+                game_piece_context=game_piece_context,
+                question=query
+            )
+            
+            # Use Ollama with streaming
+            model = Ollama(model="gpt-oss:20b")
+            
+            # Stream the response
+            for chunk in model.stream(prompt):
+                yield chunk
+                
+        except Exception as e:
+            # Fallback response if AI generation fails
+            fallback = f"Based on the technical documentation, here's what I found:\n\n{context_text[:1000]}..."
+            if game_piece_context:
+                fallback += f"\n\nGame Piece Information:\n{game_piece_context}"
+            
+            # Yield fallback in chunks for consistent streaming experience
+            chunk_size = 50
+            for i in range(0, len(fallback), chunk_size):
+                yield fallback[i:i+chunk_size]
+                time.sleep(0.01)  # Small delay for visual effect

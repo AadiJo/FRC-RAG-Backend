@@ -101,6 +101,11 @@
                     </div>
                 </div>
             </div>
+            
+            <!-- Scroll to bottom button -->
+            <button class="scroll-to-bottom" id="scrollToBottomBtn" style="display: none;">
+                <i class="fas fa-arrow-down"></i>
+            </button>
         </div>
 
         <!-- Loading Indicator -->
@@ -279,7 +284,7 @@
                 }
             }
             
-            scrollToBottom();
+            autoScrollToBottom();
         }
 
         function createImageItem(image, index) {
@@ -438,6 +443,28 @@
             chatMessages.scrollTop = chatMessages.scrollHeight;
         }
 
+        function hasMessageReachedTop(messageElement) {
+            if (!messageElement || !chatMessages) return false;
+            const chatRect = chatMessages.getBoundingClientRect();
+            const messageRect = messageElement.getBoundingClientRect();
+            // Check if the top of the message is at or above the top of the chat container
+            return messageRect.top <= chatRect.top;
+        }
+
+        function checkPendingTopMessage(force = false) {
+            if (!pendingTopMessage) return;
+
+            if (force || hasMessageReachedTop(pendingTopMessage)) {
+                console.log('Pending message reached top, disabling auto-scroll.');
+                pendingTopMessage = null;
+                isAutoScrollEnabled = false;
+                // Don't set isUserScrolling here, let the scroll handler manage it.
+                if (!isAtBottom()) {
+                    scrollToBottomBtn.style.display = 'block';
+                }
+            }
+        }
+
         function getTeamDisplayName(imagePath) {
             // Extract team number from the file path
             // Path format: "1323-2025/page0_img1.png" or "data/images/1323-2025/page0_img1.png"
@@ -468,9 +495,79 @@
         const modalDescription = document.getElementById('modalDescription');
         const modalClose = document.getElementById('modalClose');
         const sidebarToggle = document.getElementById('sidebarToggle');
+        const scrollToBottomBtn = document.getElementById('scrollToBottomBtn');
 
         // Global variable to store the current query for feedback
         let currentQuery = '';
+        
+        // Scroll management
+        let isAutoScrollEnabled = false; // Start disabled by default
+        let isUserScrolling = false; // Track if user is manually scrolling
+        let lastScrollTop = 0;
+        let isProgrammaticScroll = false; // Flag to track our own scrolls
+        let pendingTopMessage = null;
+
+        // Check if user is at bottom of chat
+        function isAtBottom() {
+            const threshold = 50; // pixels from bottom
+            return chatMessages.scrollHeight - chatMessages.scrollTop - chatMessages.clientHeight < threshold;
+        }
+
+        // Auto scroll only if enabled
+        function autoScrollToBottom() {
+            if (isAutoScrollEnabled && !isUserScrolling) {
+                isProgrammaticScroll = true;
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+                lastScrollTop = chatMessages.scrollTop;
+                scrollToBottomBtn.style.display = 'none';
+                setTimeout(() => { isProgrammaticScroll = false; }, 50);
+            } else if (!isAutoScrollEnabled && !isAtBottom()) {
+                // Show button if auto-scroll is disabled and not at bottom
+                scrollToBottomBtn.style.display = 'block';
+            }
+        }
+
+        // Force scroll to bottom (when user clicks button)
+        function scrollToBottom() {
+            console.log('Scroll button clicked - enabling follow mode');
+            isAutoScrollEnabled = true; // Enable auto-scroll
+            isUserScrolling = false; // Reset user scrolling flag
+            isProgrammaticScroll = true;
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+            lastScrollTop = chatMessages.scrollTop;
+            scrollToBottomBtn.style.display = 'none';
+            setTimeout(() => { isProgrammaticScroll = false; }, 50);
+        }
+
+        // Handle scroll event - detect user scrolling
+        chatMessages.addEventListener('scroll', function(e) {
+            // Ignore if this is a programmatic scroll
+            if (isProgrammaticScroll) {
+                return;
+            }
+            
+            const currentScrollTop = chatMessages.scrollTop;
+            
+            // User is scrolling - disable auto-scroll immediately
+            if (isAutoScrollEnabled) {
+                console.log('User scrolled - disabling follow mode');
+            }
+            isUserScrolling = true;
+            isAutoScrollEnabled = false;
+            pendingTopMessage = null;
+            
+            // Show/hide button based on position
+            if (!isAtBottom()) {
+                scrollToBottomBtn.style.display = 'block';
+            } else {
+                scrollToBottomBtn.style.display = 'none';
+            }
+            
+            lastScrollTop = currentScrollTop;
+        });
+
+        // Scroll to bottom button click
+        scrollToBottomBtn.addEventListener('click', scrollToBottom);
 
         // Feedback function
         function submitFeedback(responseText, feedbackType, feedbackDiv) {
@@ -576,30 +673,136 @@
             
             // Show loading
             showLoading();
+
+            // Track this user message so we follow the response until it reaches the top
+            const userMessages = chatMessages.querySelectorAll('.user-message');
+            const lastUserMessage = userMessages[userMessages.length - 1];
+            if (lastUserMessage) {
+                pendingTopMessage = lastUserMessage;
+                isAutoScrollEnabled = true;
+                isUserScrolling = false;
+                scrollToBottomBtn.style.display = 'none';
+
+                // Immediately snap to the bottom so the conversation follows the assistant
+                isProgrammaticScroll = true;
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+                setTimeout(() => { isProgrammaticScroll = false; }, 50);
+            }
+            // Use streaming API for ChatGPT-like experience
+            sendMessageWithStreaming(message);
+        }
+
+        function sendMessageWithStreaming(message) {
+            console.log('Sending streaming request to backend...');
             
-            console.log('Sending request to backend...');
-            // Send request to backend
-            fetch('/api/query', {
+            // Create a placeholder for the streaming response
+            let assistantMessageDiv = null;
+            let textDiv = null;
+            let currentText = '';
+            let metadata = null;
+            let hasRenderedVisibleContent = false;
+            
+            const eventSource = new EventSource(`/api/query/stream?${new URLSearchParams({})}`);
+            
+            // Use fetch with streaming for POST
+            fetch('/api/query/stream', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({ query: message })
             })
-            .then(response => {
-                console.log('Response received:', response.status, response.statusText);
+            .then(async response => {
                 if (!response.ok) {
                     throw new Error(`HTTP ${response.status}: ${response.statusText}`);
                 }
-                return response.json();
-            })
-            .then(data => {
-                console.log('Data received:', data);
-                hideLoading();
-                if (data.error) {
-                    addMessage(`Error: ${data.error}`, 'assistant', [], true);
-                } else {
-                    addMessage(data.response, 'assistant', data.images, false, data);
+                
+                // DON'T hide loading yet - wait for first content chunk
+                
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                
+                while (true) {
+                    const { done, value } = await reader.read();
+                    
+                    if (done) {
+                        console.log('Stream complete');
+                        break;
+                    }
+                    
+                    // Decode the chunk
+                    const chunk = decoder.decode(value, { stream: true });
+                    const lines = chunk.split('\n');
+                    
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.substring(6));
+                                
+                                if (data.type === 'metadata') {
+                                    // Received metadata - store it for later use
+                                    metadata = data.data;
+                                    console.log('Metadata received:', metadata);
+                                    
+                                    // DON'T hide loading yet - wait for first content token
+                                    
+                                    // Create the assistant message container
+                                    assistantMessageDiv = createStreamingMessageContainer(metadata);
+                                    textDiv = assistantMessageDiv.querySelector('.message-text');
+                                    
+                                } else if (data.type === 'content') {
+                                    // Received content chunk - append to message
+                                    if (textDiv) {
+                                        currentText += data.data;
+                                        // Keep the cursor at the end while streaming
+                                        textDiv.innerHTML = formatText(currentText) + '<span class="streaming-cursor">|</span>';
+                                        
+                                        // Hide loading only after visible text is rendered to the screen
+                                        if (!hasRenderedVisibleContent) {
+                                            requestAnimationFrame(() => {
+                                                const renderedText = textDiv.innerText.replace('|', '').trim();
+                                                if (!hasRenderedVisibleContent && renderedText.length > 0) {
+                                                    hasRenderedVisibleContent = true;
+                                                    hideLoading();
+                                                    console.log('First content rendered on screen - hiding loading');
+
+                                                    // Auto-scroll to the start of the response
+                                                    assistantMessageDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                                                }
+                                            });
+                                        }
+                                        
+                                        // Syntax highlight code blocks
+                                        textDiv.querySelectorAll('pre code').forEach((block) => {
+                                            if (window.hljs) window.hljs.highlightElement(block);
+                                        });
+                                        
+                                        // Auto-scroll if enabled
+                                        autoScrollToBottom();
+                                        checkPendingTopMessage();
+                                    }
+                                    
+                                } else if (data.type === 'done') {
+                                    // Stream complete - finalize the message
+                                    console.log('Response streaming complete');
+                                    if (!hasRenderedVisibleContent) {
+                                        hideLoading();
+                                    }
+                                    checkPendingTopMessage(true);
+                                    if (assistantMessageDiv && metadata) {
+                                        finalizeStreamingMessage(assistantMessageDiv, currentText, metadata);
+                                    }
+                                    
+                                } else if (data.type === 'error') {
+                                    console.error('Stream error:', data.error);
+                                    hideLoading();
+                                    addMessage(`Error: ${data.error}`, 'assistant', [], true);
+                                }
+                            } catch (e) {
+                                console.error('Error parsing SSE data:', e, line);
+                            }
+                        }
+                    }
                 }
             })
             .catch(error => {
@@ -608,6 +811,143 @@
                 addMessage(`Error: ${error.message || error}. Check browser console for details.`, 'assistant', [], true);
             });
         }
+
+        function createStreamingMessageContainer(metadata) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message assistant-message';
+
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content';
+
+            const avatarDiv = document.createElement('div');
+            avatarDiv.className = 'message-avatar';
+            avatarDiv.innerHTML = '<div class="assistant-avatar"><i class="fas fa-robot"></i></div>';
+
+            const textContentDiv = document.createElement('div');
+            textContentDiv.className = 'message-text-container';
+
+            // Add game piece mapping info if available
+            if (metadata && metadata.matched_pieces) {
+                let matchedPiecesText = '';
+                if (Array.isArray(metadata.matched_pieces)) {
+                    matchedPiecesText = metadata.matched_pieces.join(', ');
+                } else {
+                    matchedPiecesText = metadata.matched_pieces.toString();
+                }
+                
+                if (matchedPiecesText.trim()) {
+                    const mappingDiv = document.createElement('div');
+                    mappingDiv.className = 'game-piece-mapping';
+                    mappingDiv.innerHTML = `
+                        <div class="mapping-header">
+                            <i class="fas fa-link"></i> Game Piece Mapping
+                        </div>
+                        <div class="mapping-content">
+                            Detected: <strong>${matchedPiecesText}</strong>
+                            ${metadata.enhanced_query !== metadata.original_query ? 
+                                `<br><small>Enhanced search: "${metadata.enhanced_query}"</small>` : ''}
+                        </div>
+                    `;
+                    textContentDiv.appendChild(mappingDiv);
+                }
+            }
+
+            const textDiv = document.createElement('div');
+            textDiv.className = 'message-text';
+            textDiv.innerHTML = '<span class="streaming-cursor">|</span>'; // Bar cursor
+
+            textContentDiv.appendChild(textDiv);
+            contentDiv.appendChild(avatarDiv);
+            contentDiv.appendChild(textContentDiv);
+            messageDiv.appendChild(contentDiv);
+
+            const chatMessages = document.getElementById('chatMessages');
+            chatMessages.appendChild(messageDiv);
+            autoScrollToBottom();
+            
+            return messageDiv;
+        }
+
+        function finalizeStreamingMessage(messageDiv, finalText, metadata) {
+            const textContentDiv = messageDiv.querySelector('.message-text-container');
+            const textDiv = messageDiv.querySelector('.message-text');
+            
+            // Remove cursor
+            textDiv.innerHTML = formatText(finalText);
+            
+            // Add images if present
+            if (metadata.images && metadata.images.length > 0) {
+                const imagesDiv = document.createElement('div');
+                imagesDiv.className = 'message-images';
+                
+                const imageHeader = document.createElement('div');
+                imageHeader.className = 'image-header';
+                imageHeader.innerHTML = `<i class="fas fa-images"></i> Related Images (${metadata.images.length})`;
+                imagesDiv.appendChild(imageHeader);
+
+                const imageGrid = document.createElement('div');
+                imageGrid.className = 'image-grid';
+
+                metadata.images.forEach((image, index) => {
+                    const imageItem = createImageItem(image, index);
+                    imageGrid.appendChild(imageItem);
+                });
+
+                imagesDiv.appendChild(imageGrid);
+                textContentDiv.appendChild(imagesDiv);
+            }
+
+            // Add feedback buttons
+            const feedbackDiv = document.createElement('div');
+            feedbackDiv.className = 'feedback-buttons';
+            
+            const feedbackLabel = document.createElement('div');
+            feedbackLabel.className = 'feedback-label';
+            feedbackLabel.textContent = 'Was this response helpful?';
+            
+            const buttonsContainer = document.createElement('div');
+            buttonsContainer.className = 'feedback-button-container';
+            
+            const goodButton = document.createElement('button');
+            goodButton.className = 'feedback-btn feedback-good';
+            goodButton.innerHTML = '<i class="fas fa-thumbs-up"></i> Good';
+            goodButton.onclick = () => submitFeedback(finalText, 'good', feedbackDiv);
+            
+            const badButton = document.createElement('button');
+            badButton.className = 'feedback-btn feedback-bad';
+            badButton.innerHTML = '<i class="fas fa-thumbs-down"></i> Bad';
+            badButton.onclick = () => submitFeedback(finalText, 'bad', feedbackDiv);
+            
+            const redoButton = document.createElement('button');
+            redoButton.className = 'feedback-btn feedback-redo';
+            redoButton.innerHTML = '<i class="fas fa-redo"></i> Redo';
+            redoButton.onclick = () => submitFeedback(finalText, 'redo', feedbackDiv);
+            
+            buttonsContainer.appendChild(goodButton);
+            buttonsContainer.appendChild(badButton);
+            buttonsContainer.appendChild(redoButton);
+            
+            feedbackDiv.appendChild(feedbackLabel);
+            feedbackDiv.appendChild(buttonsContainer);
+            textContentDiv.appendChild(feedbackDiv);
+            
+            // Mark as latest assistant message
+            messageDiv.classList.add('latest-assistant-message');
+            
+            // Remove redo from previous messages
+            const chatMessages = document.getElementById('chatMessages');
+            const previousLatestMessages = chatMessages.querySelectorAll('.latest-assistant-message');
+            previousLatestMessages.forEach(msg => {
+                if (msg !== messageDiv) {
+                    msg.classList.remove('latest-assistant-message');
+                    const redoBtn = msg.querySelector('.feedback-redo');
+                    if (redoBtn) redoBtn.remove();
+                }
+            });
+            
+            autoScrollToBottom();
+        }
+
 
         // Initialize
         document.addEventListener('DOMContentLoaded', function() {
