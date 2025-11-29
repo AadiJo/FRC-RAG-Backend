@@ -75,7 +75,7 @@ elements.messageInput.addEventListener('keypress', function (e) {
 
 elements.modalClose.addEventListener('click', closeModal);
 elements.imageModal.addEventListener('click', function (e) {
-    if (e.target === elements.imageModal) {
+    if (e.target === elements.imageModal || e.target.classList.contains('image-modal-content')) {
         closeModal();
     }
 });
