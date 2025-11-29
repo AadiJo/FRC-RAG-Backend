@@ -254,6 +254,7 @@ def api_query_stream():
             
         query_text = data.get('query', '').strip()
         conversation_history = data.get('conversation_history', [])
+        show_reasoning = data.get('show_reasoning', None)
         
         if not query_text:
             return jsonify({"error": "Query text is required"}), 400
@@ -279,7 +280,7 @@ def api_query_stream():
                 yield f"data: {json.dumps({'type': 'metadata', 'data': metadata})}\n\n"
                 
                 # Stream the response
-                for chunk in query_processor.stream_query_response(query_text, metadata):
+                for chunk in query_processor.stream_query_response(query_text, metadata, show_reasoning=show_reasoning):
                     yield f"data: {json.dumps({'type': 'content', 'data': chunk})}\n\n"
                 
                 # Send completion event

@@ -23,7 +23,8 @@ class ChutesClient:
             logger.warning("Chutes API token not configured")
     
     def chat_completion(self, prompt: str, stream: bool = False, 
-                       max_tokens: int = 100000, temperature: float = 0.7) -> str:
+                       max_tokens: int = 100000, temperature: float = 0.7,
+                       show_reasoning: bool = None) -> str:
         """
         Generate a chat completion using Chutes AI
         
@@ -32,12 +33,16 @@ class ChutesClient:
             stream: Whether to stream the response (currently returns full response)
             max_tokens: Maximum tokens in response
             temperature: Temperature for response generation
+            show_reasoning: Whether to include reasoning content (overrides config)
             
         Returns:
             The generated response text
         """
         if not self.api_token:
             raise ValueError("Chutes API token not configured")
+            
+        # Use provided flag or fall back to config
+        include_reasoning = show_reasoning if show_reasoning is not None else Config.SHOW_MODEL_REASONING
         
         headers = {
             "Authorization": f"Bearer {self.api_token}",
@@ -80,19 +85,19 @@ class ChutesClient:
                 reasoning_content = message.get('reasoning_content', '')
                 
                 # Decide what to return based on configuration
-                if Config.SHOW_MODEL_REASONING and reasoning_content:
+                if include_reasoning and reasoning_content:
                     # Include reasoning if enabled and available
                     if content:
-                        return f"**Reasoning:** {reasoning_content}\n\n**Response:** {content}"
+                        return f"> *Reasoning: {reasoning_content}*\n\n{content}"
                     else:
-                        return reasoning_content
+                        return f"> *Reasoning: {reasoning_content}*"
                 else:
                     # Return only content, skip reasoning
                     if content:
                         return content
                     elif reasoning_content:
                         # If no content but reasoning available, log a warning
-                        logger.warning("Only reasoning_content available, but SHOW_MODEL_REASONING is disabled")
+                        logger.warning("Only reasoning_content available, but show_reasoning is disabled")
                         return "I apologize, but I'm having trouble generating a proper response. Please try again."
                     else:
                         logger.error(f"No content in response: {result}")
@@ -109,7 +114,7 @@ class ChutesClient:
             raise ValueError(f"Failed to parse Chutes AI response: {e}")
     
     def chat_completion_stream(self, prompt: str, max_tokens: int = 100000, 
-                             temperature: float = 0.7) -> Generator[str, None, None]:
+                             temperature: float = 0.7, show_reasoning: bool = None) -> Generator[str, None, None]:
         """
         Generate a streaming chat completion using Chutes AI
         
@@ -117,12 +122,16 @@ class ChutesClient:
             prompt: The prompt to send to the model
             max_tokens: Maximum tokens in response
             temperature: Temperature for response generation
+            show_reasoning: Whether to include reasoning content (overrides config)
             
         Yields:
             Chunks of the generated response text
         """
         if not self.api_token:
             raise ValueError("Chutes API token not configured")
+            
+        # Use provided flag or fall back to config
+        include_reasoning = show_reasoning if show_reasoning is not None else Config.SHOW_MODEL_REASONING
         
         headers = {
             "Authorization": f"Bearer {self.api_token}",
@@ -155,6 +164,7 @@ class ChutesClient:
             response.raise_for_status()
             
             # Process streaming response
+            reasoning_started = False
             for line in response.iter_lines(decode_unicode=True):
                 if line and line.startswith('data: '):
                     data_str = line[6:]  # Remove 'data: ' prefix
@@ -173,15 +183,29 @@ class ChutesClient:
                             reasoning_content = delta.get('reasoning_content', '')
                             
                             # Decide what to yield based on configuration
-                            if Config.SHOW_MODEL_REASONING and reasoning_content:
-                                yield reasoning_content
-                            elif content:
+                            if include_reasoning and reasoning_content:
+                                # Ensure newlines in reasoning are prefixed with > to maintain blockquote
+                                formatted_reasoning = reasoning_content.replace('\n', '\n> ')
+                                
+                                if not reasoning_started:
+                                    yield f"> *Reasoning:*\n> {formatted_reasoning}"
+                                    reasoning_started = True
+                                else:
+                                    yield formatted_reasoning
+                            
+                            if content:
+                                if reasoning_started:
+                                    yield "\n\n"
+                                    reasoning_started = False
                                 yield content
-                            # Skip reasoning content if SHOW_MODEL_REASONING is False
                                 
                     except json.JSONDecodeError as e:
                         logger.warning(f"Failed to parse streaming data: {e}")
                         continue
+            
+            # Ensure reasoning block is closed if stream ends
+            if reasoning_started:
+                yield "\n\n"
                         
         except requests.exceptions.RequestException as e:
             logger.error(f"Streaming request error: {e}")

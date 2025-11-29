@@ -304,11 +304,11 @@ Instructions:
             self.chutes_client = None
             print(f"✅ Using local Ollama for model provider: {Config.MODEL_PROVIDER}")
 
-    def _generate_response(self, prompt: str) -> str:
+    def _generate_response(self, prompt: str, show_reasoning: bool = None) -> str:
         """Generate response using the configured model provider"""
         if Config.MODEL_PROVIDER == 'chute' and self.chutes_client:
             try:
-                return self.chutes_client.chat_completion(prompt)
+                return self.chutes_client.chat_completion(prompt, show_reasoning=show_reasoning)
             except Exception as e:
                 print(f"❌ Chutes AI request failed: {e}")
                 # Fallback to basic response
@@ -322,11 +322,11 @@ Instructions:
                 print(f"❌ Ollama request failed: {e}")
                 return "I encountered an issue generating the response. Please try again."
 
-    def _generate_response_stream(self, prompt: str):
+    def _generate_response_stream(self, prompt: str, show_reasoning: bool = None):
         """Generate streaming response using the configured model provider"""
         if Config.MODEL_PROVIDER == 'chute' and self.chutes_client:
             try:
-                for chunk in self.chutes_client.chat_completion_stream(prompt):
+                for chunk in self.chutes_client.chat_completion_stream(prompt, show_reasoning=show_reasoning):
                     yield chunk
             except Exception as e:
                 print(f"❌ Chutes AI streaming failed: {e}")
@@ -897,7 +897,7 @@ Instructions:
             "conversation_history": conversation_history or []
         }
     
-    def stream_query_response(self, query: str, metadata: Dict[str, Any]):
+    def stream_query_response(self, query: str, metadata: Dict[str, Any], show_reasoning: bool = None):
         """
         Stream the LLM response for a query.
         Yields chunks of text as they're generated.
@@ -931,7 +931,7 @@ Instructions:
             )
             
             # Stream the response using the configured provider
-            for chunk in self._generate_response_stream(prompt):
+            for chunk in self._generate_response_stream(prompt, show_reasoning=show_reasoning):
                 yield chunk
                 
         except Exception as e:

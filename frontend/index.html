@@ -66,16 +66,52 @@
             </div>
 
             <!-- Input Area -->
-            <div class="bg-background p-5 border-t border-[#2f2f2f]">
+            <div class="bg-background p-4 border-t border-[#2f2f2f] relative z-20">
                 <div class="max-w-3xl mx-auto">
-                    <div
-                        class="relative flex items-center bg-secondary border-2 border-[#424242] rounded-3xl px-4 py-3 transition-all focus-within:border-primary focus-within:shadow-lg focus-within:shadow-primary/20">
-                        <textarea id="messageInput" placeholder="Ask me anything about FRC..."
-                            class="flex-1 bg-transparent border-none outline-none text-foreground text-base leading-normal p-0 resize-none max-h-[200px] overflow-y-auto placeholder:text-[#8e8ea0]"></textarea>
-                        <button id="sendButton"
-                            class="w-8 h-8 border-none rounded-2xl bg-primary text-white cursor-pointer flex items-center justify-center transition-all text-sm ml-2 flex-shrink-0 hover:bg-primary/90 hover:scale-105 active:scale-95 disabled:bg-[#424242] disabled:cursor-not-allowed disabled:hover:scale-100">
-                            <i class="fas fa-arrow-up"></i>
-                        </button>
+                    <div id="inputWrapper" class="bg-secondary border-2 border-[#424242] rounded-[26px] p-3 transition-all focus-within:border-primary focus-within:shadow-lg focus-within:shadow-primary/20 relative flex flex-col gap-2">
+                        
+                        <textarea id="messageInput" placeholder="Ask anything..."
+                            class="w-full bg-transparent border-none outline-none text-foreground text-base leading-relaxed resize-none max-h-[200px] overflow-y-hidden placeholder:text-[#8e8ea0] min-h-[40px] pl-2" rows="1" style="height: 40px;"></textarea>
+                        
+                        <div class="flex justify-between items-center">
+                            <div class="flex items-center gap-2">
+                                <div class="relative">
+                                    <button id="toolsToggle" class="w-8 h-8 rounded-full text-[#8e8ea0] hover:text-foreground hover:bg-[#3f3f3f] flex items-center justify-center transition-colors" title="Tools">
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                            <path d="M4 21V14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                            <path d="M4 10V3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                            <path d="M12 21V12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                            <path d="M12 8V3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                            <path d="M20 21V16" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                            <path d="M20 12V3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                            <path d="M1 14H7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                            <path d="M9 8H15" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                            <path d="M17 16H23" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                        </svg>
+                                    </button>
+                                    
+                                    <!-- Tools Menu -->
+                                    <div id="toolsMenu" class="absolute bottom-full left-0 mb-2 bg-[#1e1e1e] border border-[#424242] rounded-xl p-2 shadow-xl transform transition-all duration-200 origin-bottom-left opacity-0 scale-95 pointer-events-none z-50 min-w-[200px]">
+                                        <div class="flex flex-col gap-1">
+                                            <label class="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-[#2f2f2f] cursor-pointer transition-colors group">
+                                                <div class="relative flex items-center">
+                                                    <input type="checkbox" id="showReasoning" class="peer sr-only">
+                                                    <div class="w-9 h-5 bg-[#424242] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary"></div>
+                                                </div>
+                                                <span class="text-sm text-[#e1e1e1] group-hover:text-white">Show reasoning</span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div id="activeTools" class="flex flex-wrap gap-2 empty:hidden"></div>
+                            </div>
+
+                            <button id="sendButton"
+                                class="w-8 h-8 rounded-full bg-primary text-white flex items-center justify-center transition-all hover:bg-primary/90 disabled:bg-[#424242] disabled:cursor-not-allowed">
+                                <i class="fas fa-arrow-up"></i>
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>

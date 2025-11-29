@@ -59,7 +59,89 @@ document.addEventListener('DOMContentLoaded', function () {
 // Event Listeners
 console.log('Setting up event listeners...');
 
-elements.messageInput.addEventListener('input', updateSendButtonState);
+elements.messageInput.addEventListener('input', function() {
+    this.style.height = 'auto';
+    this.style.height = (this.scrollHeight) + 'px';
+    if (this.value === '') {
+        this.style.height = '40px';
+    }
+    // Toggle overflow based on content height vs max height
+    if (this.scrollHeight > 200) {
+        this.classList.remove('overflow-y-hidden');
+        this.classList.add('overflow-y-auto');
+    } else {
+        this.classList.add('overflow-y-hidden');
+        this.classList.remove('overflow-y-auto');
+    }
+    updateSendButtonState();
+});
+
+if (elements.toolsToggle && elements.toolsMenu) {
+    elements.toolsToggle.addEventListener('click', function(e) {
+        e.stopPropagation();
+        const isHidden = elements.toolsMenu.classList.contains('opacity-0');
+        
+        if (isHidden) {
+            // Show
+            elements.toolsMenu.classList.remove('opacity-0', 'scale-95', 'pointer-events-none');
+            elements.toolsMenu.classList.add('opacity-100', 'scale-100', 'pointer-events-auto');
+            this.classList.add('text-primary');
+            this.classList.remove('text-[#8e8ea0]');
+        } else {
+            // Hide
+            elements.toolsMenu.classList.add('opacity-0', 'scale-95', 'pointer-events-none');
+            elements.toolsMenu.classList.remove('opacity-100', 'scale-100', 'pointer-events-auto');
+            this.classList.remove('text-primary');
+            this.classList.add('text-[#8e8ea0]');
+        }
+    });
+
+    // Close menu when clicking outside
+    document.addEventListener('click', function(e) {
+        if (!elements.toolsMenu.contains(e.target) && e.target !== elements.toolsToggle && !elements.toolsToggle.contains(e.target)) {
+            elements.toolsMenu.classList.add('opacity-0', 'scale-95', 'pointer-events-none');
+            elements.toolsMenu.classList.remove('opacity-100', 'scale-100', 'pointer-events-auto');
+            elements.toolsToggle.classList.remove('text-primary');
+            elements.toolsToggle.classList.add('text-[#8e8ea0]');
+        }
+    });
+}
+
+// Handle Reasoning Tool Chip
+if (elements.showReasoning) {
+    elements.showReasoning.addEventListener('change', function() {
+        updateToolChips();
+    });
+}
+
+// Initialize chips on load
+updateToolChips();
+
+function updateToolChips() {
+    const activeTools = elements.activeTools;
+    if (!activeTools) return;
+    
+    activeTools.innerHTML = '';
+    
+    if (elements.showReasoning && elements.showReasoning.checked) {
+        const chip = document.createElement('div');
+        chip.className = 'flex items-center gap-2 bg-[#1e3a8a] text-[#60a5fa] px-3 py-1.5 rounded-full text-sm font-medium cursor-pointer hover:bg-[#1e40af] transition-colors group select-none';
+        chip.innerHTML = `
+            <div class="w-4 h-4 flex items-center justify-center relative">
+                <i class="fas fa-brain text-xs absolute transition-opacity duration-200 opacity-100 group-hover:opacity-0"></i>
+                <i class="fas fa-times text-xs absolute transition-opacity duration-200 opacity-0 group-hover:opacity-100"></i>
+            </div>
+            <span>Reasoning</span>
+        `;
+        
+        chip.addEventListener('click', function() {
+            elements.showReasoning.checked = false;
+            updateToolChips();
+        });
+        
+        activeTools.appendChild(chip);
+    }
+}
 
 elements.sendButton.addEventListener('click', function () {
     console.log('Send button clicked!');
@@ -129,6 +211,7 @@ function sendMessage(queryOverride) {
 
     // Clear input
     elements.messageInput.value = '';
+    elements.messageInput.style.height = '40px';
     updateSendButtonState();
 
     // Show loading
@@ -213,7 +296,11 @@ function sendMessageWithStreaming(message) {
         attachTableInteractionHandlers();
     }
 
-    streamQuery(message, state.conversationHistory, {
+    const options = {
+        show_reasoning: elements.showReasoning ? elements.showReasoning.checked : false
+    };
+
+    streamQuery(message, state.conversationHistory, options, {
         onMetadata: (data) => {
             metadata = data;
             console.log('Metadata received:', metadata);

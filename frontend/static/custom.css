@@ -136,8 +136,9 @@
     padding: 10px 12px;
     border-left: 4px solid #3b82f6;
     background: #1a1a1a;
-    color: #cfcfcf;
+    color: #9ca3af;
     border-radius: 4px;
+    font-style: italic;
 }
 
 .message-text code {

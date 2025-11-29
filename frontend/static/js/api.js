@@ -58,7 +58,7 @@ export function submitFeedback(query, responseText, feedbackType, onSuccess, onE
         });
 }
 
-export async function streamQuery(query, conversationHistory, callbacks) {
+export async function streamQuery(query, conversationHistory, options, callbacks) {
     const { onMetadata, onContent, onDone, onError } = callbacks;
 
     try {
@@ -69,7 +69,8 @@ export async function streamQuery(query, conversationHistory, callbacks) {
             },
             body: JSON.stringify({
                 query: query,
-                conversation_history: conversationHistory
+                conversation_history: conversationHistory,
+                ...options
             })
         });
 
