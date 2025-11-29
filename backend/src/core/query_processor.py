@@ -9,12 +9,14 @@ import time
 import requests
 import numpy as np
 import re
+import chromadb
 from typing import List, Dict, Any, Tuple
 from langchain_community.vectorstores import Chroma
 from langchain.prompts import ChatPromptTemplate
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.llms import Ollama
 from .game_piece_mapper import GamePieceMapper
+from .image_embedder import ImageEmbedder
 from ..utils.query_cache import QueryCache, ChunkCache
 from ..server.chutes_client import ChutesClient
 from ..server.config import get_config
@@ -115,7 +117,7 @@ class QueryProcessor:
         self.game_piece_mapper = GamePieceMapper()
         
         # Initialize embedding function
-        self.embedding_function = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+        self.embedding_function = HuggingFaceEmbeddings(model_name="BAAI/bge-large-en-v1.5")
         
         # Initialize post-processing filter
         self.enable_post_processing = enable_post_processing
@@ -149,6 +151,17 @@ class QueryProcessor:
             self.query_cache = None
             self.chunk_cache = None
             print("⚠️  Query cache system disabled")
+            
+        # Initialize SigLIP model for image search
+        try:
+            self.img_model = ImageEmbedder()
+            self.chroma_client = chromadb.PersistentClient(path=chroma_path)
+            self.image_collection = self.chroma_client.get_collection(name="image_embeddings")
+            self.enable_image_search = True
+            print("✅ Image search initialized with SigLIP model")
+        except Exception as e:
+            print(f"Warning: Could not initialize image search: {e}")
+            self.enable_image_search = False
         
         # Start Ollama service (only if using local provider)
         if Config.MODEL_PROVIDER == 'local':
@@ -465,6 +478,12 @@ Instructions:
         for doc in results:
             images = self._collect_images_from_result(doc)
             related_images.extend(images)
+            
+        # --- Image Search ---
+        if self.enable_image_search:
+            print("Searching for images using embeddings...")
+            image_results = self.search_images(query, k=4)
+            related_images.extend(image_results)
         
         # Remove duplicate images based on filename
         seen_filenames = set()
@@ -926,3 +945,42 @@ Instructions:
             for i in range(0, len(fallback), chunk_size):
                 yield fallback[i:i+chunk_size]
                 time.sleep(0.01)  # Small delay for visual effect
+    
+    def search_images(self, query: str, k: int = 4) -> List[Dict[str, Any]]:
+        """
+        Search for images using SigLIP embeddings
+        """
+        if not self.enable_image_search:
+            return []
+            
+        try:
+            # Encode query text
+            query_emb = self.img_model.embed_text(query)[0]
+            
+            # Search
+            results = self.image_collection.query(
+                query_embeddings=[query_emb],
+                n_results=k
+            )
+            
+            # Format results
+            images = []
+            if results['ids']:
+                for i in range(len(results['ids'][0])):
+                    meta = results['metadatas'][0][i]
+                    # Reconstruct image object structure expected by frontend
+                    img_entry = {
+                        "filename": meta.get('filename', ''),
+                        "file_path": meta.get('file_path', ''), # This should be the web path
+                        "web_path": meta.get('file_path', ''), # Ensure web_path is set
+                        "page": meta.get('page', 'N/A'),
+                        "context_summary": results['documents'][0][i] if results['documents'] else '', # Use stored text as context
+                        "score": results['distances'][0][i] if 'distances' in results else 0,
+                        "exists": True # Flag for frontend
+                    }
+                    images.append(img_entry)
+            return images
+            
+        except Exception as e:
+            print(f"Error searching images: {e}")
+            return []

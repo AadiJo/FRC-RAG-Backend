@@ -14,6 +14,8 @@ import multiprocessing as mp
 import time
 from xml.sax.saxutils import escape
 import re
+import sys
+import chromadb
 
 from langchain.schema import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -28,6 +30,9 @@ from reportlab.lib.styles import getSampleStyleSheet
 
 # Configure paths
 BASE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../'))
+sys.path.append(BASE_PATH) # Add backend root to path to allow imports from src
+
+from src.core.image_embedder import ImageEmbedder
 DATA_PATH = os.path.join(BASE_PATH, "data")
 IMAGES_PATH = os.path.join(DATA_PATH, "images")
 REJECTED_IMAGES_PATH = os.path.join(DATA_PATH, "rejected_images")
@@ -1240,7 +1245,7 @@ def save_to_chroma(chunks: List[Document]):
     
     # Create embeddings
     embeddings = HuggingFaceEmbeddings(
-        model_name="all-MiniLM-L6-v2",
+        model_name="BAAI/bge-large-en-v1.5",
         model_kwargs={'device': 'cpu'}
     )
     
@@ -1252,6 +1257,70 @@ def save_to_chroma(chunks: List[Document]):
     )
     
     print(f"Saved {len(filtered_chunks)} chunks to {CHROMA_PATH}")
+
+    # --- Image Embeddings ---
+    print("Generating image embeddings...")
+    try:
+        # Initialize SigLIP model
+        img_embedder = ImageEmbedder()
+        
+        # Get Chroma client
+        client = chromadb.PersistentClient(path=CHROMA_PATH)
+        
+        # Create or get image collection
+        image_collection = client.get_or_create_collection(name="image_embeddings")
+        
+        # Prepare image data
+        ids = []
+        embeddings_list = []
+        metadatas = []
+        documents = [] 
+        
+        for chunk in chunks:
+            if chunk.metadata.get('type') == 'image_context' and chunk.metadata.get('image_path'):
+                image_path = chunk.metadata['image_path']
+                # Fix path if it's relative or incorrect
+                if not os.path.isabs(image_path):
+                    image_path = os.path.join(BASE_PATH, image_path)
+                    
+                if os.path.exists(image_path):
+                    try:
+                        image = Image.open(image_path)
+                        # Use SigLIP embedder
+                        emb = img_embedder.embed_image(image)[0]
+                        
+                        # Use a unique ID
+                        img_id = f"img_{os.path.basename(image_path)}"
+                        
+                        ids.append(img_id)
+                        embeddings_list.append(emb)
+                        
+                        # Filter metadata for Chroma
+                        meta = {k: str(v) for k, v in chunk.metadata.items() if isinstance(v, (str, int, float, bool))}
+                        metadatas.append(meta)
+                        
+                        documents.append(chunk.page_content) # Store the context/OCR as the document text
+                        
+                    except Exception as e:
+                        print(f"Error embedding image {image_path}: {e}")
+        
+        # Add to collection in batches
+        if ids:
+            batch_size = 50 # Smaller batch size for safety
+            for i in range(0, len(ids), batch_size):
+                end = min(i + batch_size, len(ids))
+                image_collection.add(
+                    ids=ids[i:end],
+                    embeddings=embeddings_list[i:end],
+                    metadatas=metadatas[i:end],
+                    documents=documents[i:end]
+                )
+            print(f"Added {len(ids)} image embeddings to 'image_embeddings' collection")
+        else:
+            print("No images found to embed.")
+            
+    except Exception as e:
+        print(f"Failed to generate image embeddings: {e}")
 
 
 def write_image_context_manifest(documents: List[Document], manifest_path: str = IMAGE_CONTEXTS_PDF_PATH):
@@ -1375,7 +1444,7 @@ def test_database():
     Test the created database with sample queries
     """
     embeddings = HuggingFaceEmbeddings(
-        model_name="all-MiniLM-L6-v2",
+        model_name="BAAI/bge-large-en-v1.5",
         model_kwargs={'device': 'cpu'}
     )
     
