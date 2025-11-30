@@ -18,6 +18,7 @@ from langchain_community.llms import Ollama
 from .game_piece_mapper import GamePieceMapper
 from .image_embedder import ImageEmbedder
 from ..utils.query_cache import QueryCache, ChunkCache
+from ..utils.feedback_manager import FeedbackManager
 from ..server.chutes_client import ChutesClient
 from ..server.config import get_config
 
@@ -174,6 +175,9 @@ class QueryProcessor:
         self.db = None
         self._init_database()
         
+        # Initialize feedback manager
+        self.feedback_manager = FeedbackManager(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'data'))
+        
         # Enhanced prompt template
         self.prompt_template = """
 You are an expert FRC (FIRST Robotics Competition) assistant. Answer the question based on the following context and game piece information:
@@ -185,6 +189,9 @@ CONTEXT FROM TECHNICAL DOCUMENTS:
 
 GAME PIECE INFORMATION:
 {game_piece_context}
+
+RELEVANT EXAMPLES FROM PAST FEEDBACK:
+{feedback_examples}
 
 ---
 
@@ -522,11 +529,25 @@ Instructions:
                 history_text += f"{role}: {content}\n"
             history_text += "\n---\n"
         
+        # Get feedback examples
+        feedback_examples = ""
+        try:
+            good_examples = self.feedback_manager.get_good_examples()
+            if good_examples:
+                # Simple filtering: just take the last 3
+                feedback_text = []
+                for ex in good_examples[:3]:
+                    feedback_text.append(f"Q: {ex['query']}\nA: {ex['response']}")
+                feedback_examples = "\n\n".join(feedback_text)
+        except Exception as e:
+            print(f"Warning: Could not get feedback examples: {e}")
+
         try:
             prompt_template = ChatPromptTemplate.from_template(self.prompt_template)
             prompt = prompt_template.format(
                 context=context_text,
                 game_piece_context=game_piece_context,
+                feedback_examples=feedback_examples,
                 conversation_history=history_text,
                 question=query
             )
@@ -935,11 +956,25 @@ Instructions:
                 history_text += f"{role}: {content}\n"
             history_text += "\n---\n"
         
+        # Get feedback examples
+        feedback_examples = ""
+        try:
+            good_examples = self.feedback_manager.get_good_examples()
+            if good_examples:
+                # Simple filtering: just take the last 3
+                feedback_text = []
+                for ex in good_examples[:3]:
+                    feedback_text.append(f"Q: {ex['query']}\nA: {ex['response']}")
+                feedback_examples = "\n\n".join(feedback_text)
+        except Exception as e:
+            print(f"Warning: Could not get feedback examples: {e}")
+
         try:
             prompt_template = ChatPromptTemplate.from_template(self.prompt_template)
             prompt = prompt_template.format(
                 context=context_text,
                 game_piece_context=game_piece_context,
+                feedback_examples=feedback_examples,
                 conversation_history=history_text,
                 question=query
             )

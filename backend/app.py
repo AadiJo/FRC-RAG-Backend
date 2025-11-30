@@ -23,6 +23,7 @@ from src.server.config import get_config
 from src.server.ollama_proxy import OllamaProxy
 from src.server.tunnel import TunnelManager
 from src.core.query_processor import QueryProcessor
+from src.utils.feedback_manager import FeedbackManager
 
 Config = get_config()
 
@@ -54,6 +55,7 @@ app.config['MAX_CONTENT_LENGTH'] = Config.MAX_CONTENT_LENGTH
 ollama_proxy = OllamaProxy()
 tunnel_manager = TunnelManager()
 query_processor = None
+feedback_manager = FeedbackManager(os.path.join(os.path.dirname(__file__), 'data'))
 
 def init_query_processor():
     """Initialize the query processor"""
@@ -447,11 +449,15 @@ def api_feedback():
             "timestamp": timestamp,
             "client_id": client_id,
             "query": query,
+            "response_full": response_text,
             "response_preview": response_text[:200] + ('...' if len(response_text) > 200 else ''),
             "feedback_type": feedback_type,
             "ip_address": request.remote_addr,
             "user_agent": request.headers.get('User-Agent', '')
         }
+        
+        # Save to file
+        feedback_manager.save_feedback(feedback_log)
         
         logger.info(f"FEEDBACK: {feedback_type.upper()} - Client: {client_id} - Query: {query[:100]}")
         logger.info(f"FEEDBACK_DETAIL: {json.dumps(feedback_log)}")
