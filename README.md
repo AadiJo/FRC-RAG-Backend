@@ -13,7 +13,7 @@ A production-ready Retrieval-Augmented Generation (RAG) system designed for FIRS
 - **Real-time Monitoring**: Performance monitoring and usage statistics with cache hit rates
 
 
-## Problem Statement:
+## Problem Statement
 
 FRC teams often spend time creating new designs for mechanisms that other teams have already built successfully in past seasons. This happens because teams don't have an easy way to see what solutions already exist from previous competitions.
 
@@ -23,7 +23,7 @@ When teams search for solutions, the system looks through its collection to find
 
 This tool helps FRC teams build on existing knowledge instead of starting from scratch, saving time and helping teams create better robots by learning from successful designs used by other teams.
 
-## Planned Additions:
+## Planned Additions
 
 * **Dynamic Source Integration**: Real-time document upload capability letting users to add team publications, Chief Delphi threads, and other relevant resources directly to the database during their current session
 * **Visual Search Results**: Multi-modal query responses that combine text solution descriptions with corresponding robot photos and CAD screenshots for complete technical understanding
