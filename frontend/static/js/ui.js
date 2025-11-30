@@ -36,6 +36,14 @@ export const elements = {
     settingsSave: document.getElementById('settingsSave')
 };
 
+// Mark explicit user scroll intent based on real input events
+['wheel', 'touchstart', 'touchmove'].forEach(evt => {
+    if (!elements.chatMessages) return;
+    elements.chatMessages.addEventListener(evt, () => {
+        state.userIntentToScroll = true;
+    }, { passive: true });
+});
+
 export function showLoading() {
     elements.loadingOverlay.style.display = 'flex';
     elements.loadingStage.textContent = 'Querying';
@@ -57,48 +65,94 @@ export function isAtBottom() {
     return elements.chatMessages.scrollHeight - elements.chatMessages.scrollTop - elements.chatMessages.clientHeight < threshold;
 }
 
-export function scrollToBottom() {
-    state.isAutoScrollEnabled = true;
-    state.isUserScrolling = false;
-    state.isProgrammaticScroll = true;
-    elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
-    state.lastScrollTop = elements.chatMessages.scrollTop;
-    elements.scrollToBottomBtn.style.display = 'none';
-    if (window.scrollTimeout) clearTimeout(window.scrollTimeout);
-    window.scrollTimeout = setTimeout(() => { state.isProgrammaticScroll = false; }, 100);
+export function updateScrollButton() {
+    const atBottom = isAtBottom();
+    // Show when not following and either not at bottom or forced visible
+    const shouldShow = !state.isFollowingStream && (!atBottom || state.forceScrollButtonVisible);
+    elements.scrollToBottomBtn.setAttribute('data-visible', shouldShow ? 'true' : 'false');
 }
 
-export function autoScrollToBottom() {
-    if (state.isAutoScrollEnabled && !state.isUserScrolling) {
+export function scrollToBottom() {
+    const container = elements.chatMessages;
+
+    if (state.isStreaming) {
+        // While streaming: enter follow mode and guard against our own scroll events
+        state.isFollowingStream = true;
+        state.isProgrammaticScroll = true;
+        container.scrollTop = container.scrollHeight;
+
+        if (window.scrollTimeout) clearTimeout(window.scrollTimeout);
+        window.scrollTimeout = setTimeout(() => {
+            state.isProgrammaticScroll = false;
+        }, 100);
+    } else {
+        // After streaming: just jump once, no follow
+        state.isFollowingStream = false;
+        state.forceScrollButtonVisible = false;
+        container.scrollTop = container.scrollHeight;
+    }
+
+    // Hide the arrow immediately on click
+    elements.scrollToBottomBtn.setAttribute('data-visible', 'false');
+}
+
+export function autoScrollIfFollowing() {
+    // Only auto-scroll if we're following the stream
+    if (state.isFollowingStream && state.isStreaming) {
         state.isProgrammaticScroll = true;
         elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
-        state.lastScrollTop = elements.chatMessages.scrollTop;
-        elements.scrollToBottomBtn.style.display = 'none';
+        
+        // Keep programmatic flag set longer to prevent false "user scroll" detection
         if (window.scrollTimeout) clearTimeout(window.scrollTimeout);
-        window.scrollTimeout = setTimeout(() => { state.isProgrammaticScroll = false; }, 100);
-    } else if (!state.isAutoScrollEnabled && !isAtBottom()) {
-        elements.scrollToBottomBtn.style.display = 'block';
+        window.scrollTimeout = setTimeout(() => { 
+            state.isProgrammaticScroll = false; 
+        }, 60);
     }
 }
 
-export function hasMessageReachedTop(messageElement) {
-    if (!messageElement || !elements.chatMessages) return false;
-    const chatRect = elements.chatMessages.getBoundingClientRect();
-    const messageRect = messageElement.getBoundingClientRect();
-    return messageRect.top <= chatRect.top;
+export function scrollToUserMessage(userMessageElement) {
+    // Scroll so the user message is at the top of the viewport
+    if (!userMessageElement) return;
+    state.isProgrammaticScroll = true;
+    const container = elements.chatMessages;
+    const containerRect = container.getBoundingClientRect();
+    const messageRect = userMessageElement.getBoundingClientRect();
+
+    // Compute scrollTop needed to align message top with container top
+    const offset = messageRect.top - containerRect.top;
+    container.scrollTop += offset;
+    
+    if (window.scrollTimeout) clearTimeout(window.scrollTimeout);
+    window.scrollTimeout = setTimeout(() => { 
+        state.isProgrammaticScroll = false; 
+    }, 100);
 }
 
-export function checkPendingTopMessage(force = false) {
-    if (!state.pendingTopMessage) return;
+export function handleUserScroll() {
+    // Called when scrollTop changes
+    const container = elements.chatMessages;
+    const currentTop = container.scrollTop;
 
-    if (force || hasMessageReachedTop(state.pendingTopMessage)) {
-        console.log('Pending message reached top, disabling auto-scroll.');
-        state.pendingTopMessage = null;
-        state.isAutoScrollEnabled = false;
-        if (!isAtBottom()) {
-            elements.scrollToBottomBtn.style.display = 'block';
-        }
+    // Always update lastScrollTop for next event
+    state.lastScrollTop = currentTop;
+
+    // Ignore our own programmatic scrolls entirely
+    if (state.isProgrammaticScroll) return;
+
+    const threshold = 10; // px from bottom
+    const distanceFromBottom = container.scrollHeight - currentTop - container.clientHeight;
+
+    // Only cancel follow if we saw explicit user intent and we're meaningfully away from bottom
+    if (state.userIntentToScroll && state.isFollowingStream && distanceFromBottom > threshold) {
+        console.log('User scrolled - disabling follow mode');
+        state.isFollowingStream = false;
     }
+
+    // Reset user intent after handling this scroll event
+    state.userIntentToScroll = false;
+
+    // Update button visibility based on new position
+    updateScrollButton();
 }
 
 export function openImageModal(image) {
@@ -342,7 +396,7 @@ export function addMessage(text, sender, images = [], isError = false, enhancedD
         }
     }
 
-    autoScrollToBottom();
+    autoScrollIfFollowing();
 }
 
 function handleFeedback(responseText, feedbackType, feedbackDiv, onRedo) {
@@ -419,7 +473,6 @@ export function createStreamingMessageContainer(metadata) {
     messageDiv.appendChild(contentDiv);
 
     elements.chatMessages.appendChild(messageDiv);
-    autoScrollToBottom();
 
     return messageDiv;
 }
@@ -496,5 +549,8 @@ export function finalizeStreamingMessage(messageDiv, finalText, metadata, onRedo
         }
     });
 
-    autoScrollToBottom();
+    // Streaming ended, update scroll button visibility
+    state.isStreaming = false;
+    state.isFollowingStream = false;
+    updateScrollButton();
 }

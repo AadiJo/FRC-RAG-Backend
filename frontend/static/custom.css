@@ -206,6 +206,7 @@
 /* Table wrapper */
 .table-wrapper {
     overflow-x: auto;
+    overflow-y: hidden;
     border-radius: 8px;
     border: 1px solid #333;
     max-width: min(1400px, calc(100vw - 120px));
@@ -217,6 +218,10 @@
     transform: translateX(-50%);
     pointer-events: auto;
     touch-action: pan-x pan-y;
+    -webkit-overflow-scrolling: touch;
+    /* Improve scroll performance during streaming */
+    contain: layout style;
+    will-change: scroll-position;
 }
 
 /* Welcome message styles */
@@ -662,6 +667,18 @@
     margin-left: 2px;
     font-size: 1em;
     line-height: 1;
+}
+
+/* Scroll to bottom button - use opacity for smooth transitions */
+#scrollToBottomBtn {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease-in-out, transform 0.15s ease-out;
+}
+
+#scrollToBottomBtn[data-visible="true"] {
+    opacity: 1;
+    pointer-events: auto;
 }
 
 /* Image Modal */

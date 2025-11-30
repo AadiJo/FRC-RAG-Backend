@@ -25,11 +25,13 @@ const savedSettings = loadSettings();
 export const state = {
     currentQuery: '',
     conversationHistory: [],
-    isAutoScrollEnabled: false, // Start disabled by default
-    isUserScrolling: false, // Track if user is manually scrolling
-    lastScrollTop: 0,
+    isFollowingStream: false, // When true, auto-scroll to bottom during streaming
+    isStreaming: false, // Whether we're currently receiving streamed content
     isProgrammaticScroll: false, // Flag to track our own scrolls
-    pendingTopMessage: null,
+    forceScrollButtonVisible: false,
+    lastScrollTop: 0,
+    userIntentToScroll: false,
+    scrollToResponseTop: null, // Element to scroll to top of viewport when streaming starts
     isTableInteracting: false,
     shouldRunAfterInteraction: false,
     // Settings state - API key is never persisted for security

@@ -10,8 +10,10 @@ import {
     showLoading, 
     hideLoading, 
     scrollToBottom, 
-    autoScrollToBottom, 
-    checkPendingTopMessage, 
+    autoScrollIfFollowing, 
+    updateScrollButton,
+    scrollToUserMessage,
+    handleUserScroll,
     isAtBottom, 
     createStreamingMessageContainer, 
     finalizeStreamingMessage, 
@@ -404,24 +406,7 @@ elements.imageModal.addEventListener('click', function (e) {
 elements.scrollToBottomBtn.addEventListener('click', scrollToBottom);
 
 elements.chatMessages.addEventListener('scroll', function (e) {
-    if (state.isProgrammaticScroll) {
-        return;
-    }
-
-    const currentScrollTop = elements.chatMessages.scrollTop;
-    if (state.isAutoScrollEnabled) {
-        console.log('User scrolled - disabling follow mode');
-    }
-    state.isUserScrolling = true;
-    state.isAutoScrollEnabled = false;
-    state.pendingTopMessage = null;
-    if (!isAtBottom()) {
-        elements.scrollToBottomBtn.style.display = 'block';
-    } else {
-        elements.scrollToBottomBtn.style.display = 'none';
-    }
-
-    state.lastScrollTop = currentScrollTop;
+    handleUserScroll();
 });
 
 
@@ -455,18 +440,13 @@ function sendMessage(queryOverride) {
 
     // Show loading
     showLoading();
-    const userMessages = elements.chatMessages.querySelectorAll('.user-message');
-    const lastUserMessage = userMessages[userMessages.length - 1];
-    if (lastUserMessage) {
-        state.pendingTopMessage = lastUserMessage;
-        state.isAutoScrollEnabled = true;
-        state.isUserScrolling = false;
-        elements.scrollToBottomBtn.style.display = 'none';
-        state.isProgrammaticScroll = true;
-        elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
-        if (window.scrollTimeout) clearTimeout(window.scrollTimeout);
-        window.scrollTimeout = setTimeout(() => { state.isProgrammaticScroll = false; }, 100);
-    }
+    
+    // Reset scroll state for new message - don't follow stream initially
+    state.isFollowingStream = false;
+    state.isStreaming = true;
+    state.forceScrollButtonVisible = false;
+    elements.scrollToBottomBtn.setAttribute('data-visible', 'false'); // Hide until we can show it appropriately
+    
     sendMessageWithStreaming(message);
 }
 
@@ -514,25 +494,42 @@ function sendMessageWithStreaming(message) {
 
     function updateContent(force = false) {
         if (!textDiv) return;
+        // Don't update if streaming has ended (finalizeStreamingMessage will handle it)
+        if (!state.isStreaming) return;
+        
         if (!force && state.isTableInteracting) {
             state.shouldRunAfterInteraction = true;
             pendingUpdate = true;
             return;
         }
+        
+        // Save scroll positions of all table wrappers before update
         const currentWrappers = Array.from(textDiv.querySelectorAll('.table-wrapper'));
-        tableScrollPositions = currentWrappers.map(wrapper => wrapper.scrollLeft);
-        textDiv.innerHTML = formatText(currentText) + '<span class="streaming-cursor">|</span>';
+        tableScrollPositions = currentWrappers.map(wrapper => ({
+            scrollLeft: wrapper.scrollLeft,
+            scrollTop: wrapper.scrollTop
+        }));
+        
+        // Use requestAnimationFrame for smoother updates
         requestAnimationFrame(() => {
+            // Double-check streaming is still active (could have ended during RAF delay)
+            if (!state.isStreaming) return;
+            
+            textDiv.innerHTML = formatText(currentText) + '<span class="streaming-cursor">|</span>';
+            
+            // Restore scroll positions after DOM update
             const refreshedWrappers = textDiv.querySelectorAll('.table-wrapper');
             refreshedWrappers.forEach((wrapper, index) => {
-                if (typeof tableScrollPositions[index] === 'number') {
-                    wrapper.scrollLeft = tableScrollPositions[index];
+                if (tableScrollPositions[index]) {
+                    wrapper.scrollLeft = tableScrollPositions[index].scrollLeft;
+                    wrapper.scrollTop = tableScrollPositions[index].scrollTop;
                 }
             });
+            
+            attachTableInteractionHandlers();
         });
 
         pendingUpdate = false;
-        attachTableInteractionHandlers();
     }
 
     const options = {
@@ -575,7 +572,13 @@ function sendMessageWithStreaming(message) {
                             hasRenderedVisibleContent = true;
                             hideLoading();
                             console.log('First content rendered on screen - hiding loading');
-                            assistantMessageDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                            // Scroll to show the user message at the top
+                            const userMessages = elements.chatMessages.querySelectorAll('.user-message');
+                            const lastUserMessage = userMessages[userMessages.length - 1];
+                            scrollToUserMessage(lastUserMessage);
+                            // Force-show the follow arrow so user can opt in even if at bottom
+                            state.forceScrollButtonVisible = true;
+                            updateScrollButton();
                         }
                     });
                 }
@@ -584,8 +587,9 @@ function sendMessageWithStreaming(message) {
                         if (window.hljs) window.hljs.highlightElement(block);
                     });
                 } catch (e) { /* no-op */ }
-                autoScrollToBottom();
-                checkPendingTopMessage();
+                
+                // Auto-scroll if user clicked follow button
+                autoScrollIfFollowing();
             }
         },
         onDone: () => {
@@ -594,14 +598,15 @@ function sendMessageWithStreaming(message) {
                 clearTimeout(updateTimeout);
                 updateTimeout = null;
             }
-            if (pendingUpdate) {
-                updateContent(true);
-            }
+            
+            // Mark streaming as done FIRST to prevent updateContent from running
+            state.isStreaming = false;
+            state.forceScrollButtonVisible = false;
 
             if (!hasRenderedVisibleContent) {
                 hideLoading();
             }
-            checkPendingTopMessage(true);
+            
             if (assistantMessageDiv && metadata) {
                 // Update history
                 state.conversationHistory.push({
