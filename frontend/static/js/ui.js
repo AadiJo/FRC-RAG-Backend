@@ -27,6 +27,7 @@ export const elements = {
     settingsBtn: document.getElementById('settingsBtn'),
     settingsModal: document.getElementById('settingsModal'),
     settingsClose: document.getElementById('settingsClose'),
+    systemPromptInput: document.getElementById('systemPromptInput'),
     apiKeyInput: document.getElementById('apiKeyInput'),
     toggleApiKeyVisibility: document.getElementById('toggleApiKeyVisibility'),
     validateApiKey: document.getElementById('validateApiKey'),

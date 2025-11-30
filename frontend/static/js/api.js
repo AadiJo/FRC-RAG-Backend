@@ -119,6 +119,11 @@ export async function streamQuery(query, conversationHistory, options, callbacks
             }
         }
         
+        // Add system prompt if available
+        if (state.systemPrompt) {
+            requestBody.system_prompt = state.systemPrompt;
+        }
+        
         const response = await fetch(getApiUrl('/api/query/stream'), {
             method: 'POST',
             headers: {

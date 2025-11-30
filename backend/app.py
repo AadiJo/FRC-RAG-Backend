@@ -259,6 +259,7 @@ def api_query_stream():
         show_reasoning = data.get('show_reasoning', None)
         custom_api_key = data.get('custom_api_key', None)
         custom_model = data.get('custom_model', None)
+        system_prompt = data.get('system_prompt', None)
         
         if not query_text:
             return jsonify({"error": "Query text is required"}), 400
@@ -289,7 +290,8 @@ def api_query_stream():
                     metadata, 
                     show_reasoning=show_reasoning,
                     custom_api_key=custom_api_key,
-                    custom_model=custom_model
+                    custom_model=custom_model,
+                    system_prompt=system_prompt
                 ):
                     yield f"data: {json.dumps({'type': 'content', 'data': chunk})}\n\n"
                 

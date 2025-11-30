@@ -149,6 +149,15 @@
                 <button class="settings-modal-close" id="settingsClose">&times;</button>
             </div>
             <div class="settings-modal-body">
+                <!-- System Prompt Section -->
+                <div class="settings-section">
+                    <label class="settings-label">
+                        <i class="fas fa-terminal"></i> Custom Instructions
+                    </label>
+                    <p class="settings-hint">Add custom behavior instructions for this session. Cleared on reload.</p>
+                    <textarea id="systemPromptInput" class="settings-input" placeholder="Enter custom instructions (e.g. 'Be concise', 'Act like a pirate')..." style="min-height: 80px; resize: none; width: 100%; box-sizing: border-box;"></textarea>
+                </div>
+
                 <!-- API Key Section -->
                 <div class="settings-section">
                     <label class="settings-label">

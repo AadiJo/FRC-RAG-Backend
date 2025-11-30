@@ -37,7 +37,8 @@ export const state = {
     // Settings state - API key is never persisted for security
     customApiKey: null,
     customModel: savedSettings.customModel,
-    apiKeyValidated: false
+    apiKeyValidated: false,
+    systemPrompt: null
 };
 
 export function resetConversation() {

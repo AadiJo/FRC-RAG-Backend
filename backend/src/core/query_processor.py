@@ -330,7 +330,7 @@ Instructions:
                 return "I encountered an issue generating the response. Please try again."
 
     def _generate_response_stream(self, prompt: str, show_reasoning: bool = None, 
-                                    custom_api_key: str = None, custom_model: str = None):
+                                    custom_api_key: str = None, custom_model: str = None, system_prompt: str = None):
         """Generate streaming response using the configured model provider"""
         if Config.MODEL_PROVIDER == 'chute' and self.chutes_client:
             try:
@@ -338,7 +338,8 @@ Instructions:
                     prompt, 
                     show_reasoning=show_reasoning,
                     custom_api_key=custom_api_key,
-                    custom_model=custom_model
+                    custom_model=custom_model,
+                    system_prompt=system_prompt
                 ):
                     yield chunk
             except Exception as e:
@@ -925,7 +926,7 @@ Instructions:
         }
     
     def stream_query_response(self, query: str, metadata: Dict[str, Any], show_reasoning: bool = None,
-                               custom_api_key: str = None, custom_model: str = None):
+                               custom_api_key: str = None, custom_model: str = None, system_prompt: str = None):
         """
         Stream the LLM response for a query.
         Yields chunks of text as they're generated.
@@ -936,6 +937,7 @@ Instructions:
             show_reasoning: Whether to include reasoning content
             custom_api_key: Optional custom Chutes API key
             custom_model: Optional custom model to use
+            system_prompt: Optional system prompt override
         """
         context_text = "\n\n---\n\n".join(metadata['context_parts'])
         game_piece_context = metadata.get('game_piece_context', '')
@@ -984,7 +986,8 @@ Instructions:
                 prompt, 
                 show_reasoning=show_reasoning,
                 custom_api_key=custom_api_key,
-                custom_model=custom_model
+                custom_model=custom_model,
+                system_prompt=system_prompt
             ):
                 yield chunk
                 

@@ -120,7 +120,8 @@ class ChutesClient:
     
     def chat_completion_stream(self, prompt: str, max_tokens: int = 100000, 
                              temperature: float = 0.7, show_reasoning: bool = None,
-                             custom_api_key: str = None, custom_model: str = None) -> Generator[str, None, None]:
+                             custom_api_key: str = None, custom_model: str = None, 
+                             system_prompt: str = None) -> Generator[str, None, None]:
         """
         Generate a streaming chat completion using Chutes AI
         
@@ -131,6 +132,7 @@ class ChutesClient:
             show_reasoning: Whether to include reasoning content (overrides config)
             custom_api_key: Optional custom API key to use instead of configured one
             custom_model: Optional custom model to use instead of default
+            system_prompt: Optional system prompt to prepend
             
         Yields:
             Chunks of the generated response text
@@ -150,14 +152,15 @@ class ChutesClient:
             "Content-Type": "application/json"
         }
         
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+            
+        messages.append({"role": "user", "content": prompt})
+        
         data = {
             "model": model,
-            "messages": [
-                {
-                    "role": "user", 
-                    "content": prompt
-                }
-            ],
+            "messages": messages,
             "stream": True,
             "max_tokens": max_tokens,
             "temperature": temperature

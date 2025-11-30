@@ -68,6 +68,11 @@ async function initializeSettingsModal() {
         elements.apiKeyInput.value = state.customApiKey;
     }
     
+    // Load system prompt if exists
+    if (state.systemPrompt) {
+        elements.systemPromptInput.value = state.systemPrompt;
+    }
+    
     // Setup custom dropdown listeners
     setupCustomDropdown();
     
@@ -293,6 +298,7 @@ function handleSaveSettings() {
     // Update state with current values
     state.customApiKey = elements.apiKeyInput.value.trim() || null;
     state.customModel = elements.modelSelector.value || null;
+    state.systemPrompt = elements.systemPromptInput.value.trim() || null;
     
     // If API key was cleared, reset validation state
     if (!state.customApiKey) {
