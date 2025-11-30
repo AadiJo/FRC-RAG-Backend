@@ -22,7 +22,18 @@ export const elements = {
     modalTitle: document.getElementById('modalTitle'),
     modalDescription: document.getElementById('modalDescription'),
     modalClose: document.getElementById('modalClose'),
-    scrollToBottomBtn: document.getElementById('scrollToBottomBtn')
+    scrollToBottomBtn: document.getElementById('scrollToBottomBtn'),
+    // Settings modal elements
+    settingsBtn: document.getElementById('settingsBtn'),
+    settingsModal: document.getElementById('settingsModal'),
+    settingsClose: document.getElementById('settingsClose'),
+    apiKeyInput: document.getElementById('apiKeyInput'),
+    toggleApiKeyVisibility: document.getElementById('toggleApiKeyVisibility'),
+    validateApiKey: document.getElementById('validateApiKey'),
+    apiKeyStatus: document.getElementById('apiKeyStatus'),
+    modelSelector: document.getElementById('modelSelector'),
+    modelStatus: document.getElementById('modelStatus'),
+    settingsSave: document.getElementById('settingsSave')
 };
 
 export function showLoading() {

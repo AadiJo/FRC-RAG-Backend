@@ -322,11 +322,17 @@ Instructions:
                 print(f"❌ Ollama request failed: {e}")
                 return "I encountered an issue generating the response. Please try again."
 
-    def _generate_response_stream(self, prompt: str, show_reasoning: bool = None):
+    def _generate_response_stream(self, prompt: str, show_reasoning: bool = None, 
+                                    custom_api_key: str = None, custom_model: str = None):
         """Generate streaming response using the configured model provider"""
         if Config.MODEL_PROVIDER == 'chute' and self.chutes_client:
             try:
-                for chunk in self.chutes_client.chat_completion_stream(prompt, show_reasoning=show_reasoning):
+                for chunk in self.chutes_client.chat_completion_stream(
+                    prompt, 
+                    show_reasoning=show_reasoning,
+                    custom_api_key=custom_api_key,
+                    custom_model=custom_model
+                ):
                     yield chunk
             except Exception as e:
                 print(f"❌ Chutes AI streaming failed: {e}")
@@ -897,10 +903,18 @@ Instructions:
             "conversation_history": conversation_history or []
         }
     
-    def stream_query_response(self, query: str, metadata: Dict[str, Any], show_reasoning: bool = None):
+    def stream_query_response(self, query: str, metadata: Dict[str, Any], show_reasoning: bool = None,
+                               custom_api_key: str = None, custom_model: str = None):
         """
         Stream the LLM response for a query.
         Yields chunks of text as they're generated.
+        
+        Args:
+            query: The user's query
+            metadata: Query metadata from prepare_query_metadata
+            show_reasoning: Whether to include reasoning content
+            custom_api_key: Optional custom Chutes API key
+            custom_model: Optional custom model to use
         """
         context_text = "\n\n---\n\n".join(metadata['context_parts'])
         game_piece_context = metadata.get('game_piece_context', '')
@@ -931,7 +945,12 @@ Instructions:
             )
             
             # Stream the response using the configured provider
-            for chunk in self._generate_response_stream(prompt, show_reasoning=show_reasoning):
+            for chunk in self._generate_response_stream(
+                prompt, 
+                show_reasoning=show_reasoning,
+                custom_api_key=custom_api_key,
+                custom_model=custom_model
+            ):
                 yield chunk
                 
         except Exception as e:

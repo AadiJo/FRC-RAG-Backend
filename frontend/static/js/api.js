@@ -3,6 +3,7 @@
  * I've separated all network requests here to isolate side effects.
  */
 import { getApiUrl } from './utils.js';
+import { state } from './state.js';
 
 // Helper to load images with headers (for ngrok support)
 export async function loadImage(url, imgElement) {
@@ -29,6 +30,47 @@ export async function loadImage(url, imgElement) {
         imgElement.alt = 'Failed to load image';
         // Fallback to direct src just in case it works or to show broken image
         imgElement.src = url;
+    }
+}
+
+export async function validateApiKey(apiKey) {
+    try {
+        const response = await fetch(getApiUrl('/api/chutes/validate'), {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'ngrok-skip-browser-warning': 'true'
+            },
+            body: JSON.stringify({ api_key: apiKey })
+        });
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        
+        return await response.json();
+    } catch (error) {
+        console.error('Error validating API key:', error);
+        return { valid: false, message: 'Failed to validate API key' };
+    }
+}
+
+export async function getChutesModels() {
+    try {
+        const response = await fetch(getApiUrl('/api/chutes/models'), {
+            headers: {
+                'ngrok-skip-browser-warning': 'true'
+            }
+        });
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        
+        return await response.json();
+    } catch (error) {
+        console.error('Error fetching models:', error);
+        return { models: [], default_model: '' };
     }
 }
 
@@ -62,16 +104,27 @@ export async function streamQuery(query, conversationHistory, options, callbacks
     const { onMetadata, onContent, onDone, onError } = callbacks;
 
     try {
+        // Build request body with optional custom API key and model
+        const requestBody = {
+            query: query,
+            conversation_history: conversationHistory,
+            ...options
+        };
+        
+        // Add custom API key and model if available in state
+        if (state.customApiKey && state.apiKeyValidated) {
+            requestBody.custom_api_key = state.customApiKey;
+            if (state.customModel) {
+                requestBody.custom_model = state.customModel;
+            }
+        }
+        
         const response = await fetch(getApiUrl('/api/query/stream'), {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({
-                query: query,
-                conversation_history: conversationHistory,
-                ...options
-            })
+            body: JSON.stringify(requestBody)
         });
 
         if (!response.ok) {

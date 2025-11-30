@@ -5,8 +5,12 @@ Chutes AI client for chat completions
 import requests
 import json
 import logging
+import urllib3
 from typing import Dict, Any, Generator, Optional
 from .config import get_config
+
+# Suppress SSL warnings when verify=False is used
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 Config = get_config()
 logger = logging.getLogger(__name__)
@@ -68,7 +72,8 @@ class ChutesClient:
                 self.api_url,
                 headers=headers,
                 json=data,
-                timeout=30
+                timeout=30,
+                verify=False
             )
             
             response.raise_for_status()
@@ -114,7 +119,8 @@ class ChutesClient:
             raise ValueError(f"Failed to parse Chutes AI response: {e}")
     
     def chat_completion_stream(self, prompt: str, max_tokens: int = 100000, 
-                             temperature: float = 0.7, show_reasoning: bool = None) -> Generator[str, None, None]:
+                             temperature: float = 0.7, show_reasoning: bool = None,
+                             custom_api_key: str = None, custom_model: str = None) -> Generator[str, None, None]:
         """
         Generate a streaming chat completion using Chutes AI
         
@@ -123,23 +129,29 @@ class ChutesClient:
             max_tokens: Maximum tokens in response
             temperature: Temperature for response generation
             show_reasoning: Whether to include reasoning content (overrides config)
+            custom_api_key: Optional custom API key to use instead of configured one
+            custom_model: Optional custom model to use instead of default
             
         Yields:
             Chunks of the generated response text
         """
-        if not self.api_token:
+        # Use custom API key if provided, otherwise use configured one
+        api_key = custom_api_key if custom_api_key else self.api_token
+        model = custom_model if custom_model else self.model
+        
+        if not api_key:
             raise ValueError("Chutes API token not configured")
             
         # Use provided flag or fall back to config
         include_reasoning = show_reasoning if show_reasoning is not None else Config.SHOW_MODEL_REASONING
         
         headers = {
-            "Authorization": f"Bearer {self.api_token}",
+            "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
         
         data = {
-            "model": self.model,
+            "model": model,
             "messages": [
                 {
                     "role": "user", 
@@ -152,13 +164,14 @@ class ChutesClient:
         }
         
         try:
-            logger.info(f"Sending streaming request to Chutes AI with model {self.model}")
+            logger.info(f"Sending streaming request to Chutes AI with model {model}")
             response = requests.post(
                 self.api_url,
                 headers=headers,
                 json=data,
                 stream=True,
-                timeout=60
+                timeout=60,
+                verify=False
             )
             
             response.raise_for_status()
@@ -208,8 +221,17 @@ class ChutesClient:
                 yield "\n\n"
                         
         except requests.exceptions.RequestException as e:
-            logger.error(f"Streaming request error: {e}")
-            raise ConnectionError(f"Failed to connect to Chutes AI for streaming: {e}")
+            # Try to get more details from the response
+            error_detail = str(e)
+            if hasattr(e, 'response') and e.response is not None:
+                try:
+                    error_body = e.response.text
+                    logger.error(f"Streaming request error response body: {error_body}")
+                    error_detail = f"{e} - Response: {error_body}"
+                except:
+                    pass
+            logger.error(f"Streaming request error: {error_detail}")
+            raise ConnectionError(f"Failed to connect to Chutes AI for streaming: {error_detail}")
     
     def check_health(self) -> bool:
         """

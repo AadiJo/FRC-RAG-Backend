@@ -27,6 +27,10 @@
             class="main-chat flex-1 flex flex-col bg-background min-w-0 relative">
             <!-- Header -->
             <div class="bg-background border-b border-[#2f2f2f] px-5 flex items-center justify-center relative" style="padding-top: 24px; padding-bottom: 24px;">
+                <!-- Settings Button -->
+                <button id="settingsBtn" class="absolute left-5 top-1/2 -translate-y-1/2 w-9 h-9 rounded-lg text-[#8e8ea0] hover:text-foreground hover:bg-[#3f3f3f] flex items-center justify-center transition-colors" title="Settings">
+                    <i class="fas fa-cog text-lg"></i>
+                </button>
                 <h1 class="text-xl font-semibold m-0 bg-gradient-to-r from-blue-500 to-red-500 bg-clip-text text-transparent">FRC RAG</h1>
             </div>
 
@@ -133,6 +137,52 @@
                         <div class="loading-bar" id="loadingBar"></div>
                     </div>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div class="settings-modal" id="settingsModal">
+        <div class="settings-modal-content">
+            <div class="settings-modal-header">
+                <h2><i class="fas fa-cog"></i> Settings</h2>
+                <button class="settings-modal-close" id="settingsClose">&times;</button>
+            </div>
+            <div class="settings-modal-body">
+                <!-- API Key Section -->
+                <div class="settings-section">
+                    <label class="settings-label">
+                        <i class="fas fa-key"></i> Chutes API Key
+                    </label>
+                    <p class="settings-hint">Enter your own Chutes API key to unlock model selection and use your own quota.</p>
+                    <div class="api-key-input-group">
+                        <input type="password" id="apiKeyInput" class="settings-input" placeholder="Enter your Chutes API key...">
+                        <button id="toggleApiKeyVisibility" class="api-key-toggle" title="Show/Hide API key">
+                            <i class="fas fa-eye"></i>
+                        </button>
+                        <button id="validateApiKey" class="api-key-check-btn" title="Validate API key">
+                            <i class="fas fa-check"></i>
+                        </button>
+                    </div>
+                    <div id="apiKeyStatus" class="api-key-status"></div>
+                </div>
+
+                <!-- Model Selector Section -->
+                <div class="settings-section">
+                    <label class="settings-label">
+                        <i class="fas fa-robot"></i> Model
+                    </label>
+                    <p class="settings-hint">Select a model to use. Requires a valid API key to change from default.</p>
+                    <select id="modelSelector" class="settings-select" disabled>
+                        <option value="">Using server default model</option>
+                    </select>
+                    <div id="modelStatus" class="model-status"></div>
+                </div>
+            </div>
+            <div class="settings-modal-footer">
+                <button id="settingsSave" class="settings-save-btn">
+                    <i class="fas fa-save"></i> Save Settings
+                </button>
             </div>
         </div>
     </div>

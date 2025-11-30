@@ -2,8 +2,8 @@
  * Main application entry point.
  * I've compiled the application logic here, connecting the UI, API, and State.
  */
-import { state, resetConversation } from './state.js';
-import { streamQuery } from './api.js';
+import { state, resetConversation, saveSettings, clearSettings } from './state.js';
+import { streamQuery, validateApiKey, getChutesModels } from './api.js';
 import { 
     elements, 
     addMessage, 
@@ -54,7 +54,246 @@ document.addEventListener('DOMContentLoaded', function () {
             console.log('New chat started - conversation history cleared');
         });
     }
+    
+    // Initialize settings modal
+    initializeSettingsModal();
 });
+
+// Settings Modal Functions
+async function initializeSettingsModal() {
+    // Load saved API key into input if exists
+    if (state.customApiKey) {
+        elements.apiKeyInput.value = state.customApiKey;
+    }
+    
+    // Initialize model selector state
+    updateModelSelectorState();
+    
+    // If we have a validated API key, load models
+    if (state.apiKeyValidated && state.customApiKey) {
+        await loadModels();
+        if (state.customModel) {
+            elements.modelSelector.value = state.customModel;
+        }
+    }
+}
+
+const DEFAULT_SERVER_MODEL = 'openai/gpt-oss-20b';
+const DEFAULT_SERVER_MODEL_NAME = 'GPT-OSS 20B (Server Default)';
+
+function updateModelSelectorState() {
+    if (state.apiKeyValidated) {
+        elements.modelSelector.disabled = false;
+        elements.modelStatus.innerHTML = '<i class="fas fa-check-circle"></i> Model selection enabled';
+        elements.modelStatus.style.color = '#22c55e';
+        elements.apiKeyInput.classList.remove('invalid');
+    } else {
+        elements.modelSelector.disabled = true;
+        elements.modelStatus.innerHTML = '<i class="fas fa-lock"></i> Provide a valid API key to select models';
+        elements.modelStatus.style.color = '#8e8ea0';
+        // Reset to server default model
+        elements.modelSelector.innerHTML = '';
+        const defaultOption = document.createElement('option');
+        defaultOption.value = DEFAULT_SERVER_MODEL;
+        defaultOption.textContent = DEFAULT_SERVER_MODEL_NAME;
+        elements.modelSelector.appendChild(defaultOption);
+        state.customModel = null;
+    }
+}
+
+async function loadModels() {
+    console.log('Loading models...');
+    const data = await getChutesModels();
+    console.log('Models response:', data);
+    
+    // Clear the model selector
+    elements.modelSelector.innerHTML = '';
+    
+    if (data.models && data.models.length > 0) {
+        console.log('Found', data.models.length, 'models');
+        
+        // Sort: free models first, then paid
+        const sortedModels = [...data.models].sort((a, b) => {
+            if (a.free && !b.free) return -1;
+            if (!a.free && b.free) return 1;
+            return 0;
+        });
+        
+        sortedModels.forEach(model => {
+            const option = document.createElement('option');
+            option.value = model.id;
+            // Add PAID indicator for paid models with special unicode bullet
+            option.textContent = model.free ? model.name : `${model.name}  ●  PAID`;
+            option.dataset.paid = !model.free;
+            elements.modelSelector.appendChild(option);
+        });
+        
+        // Auto-select first model (which should be free since we sorted)
+        const firstFreeModel = sortedModels.find(m => m.free);
+        if (firstFreeModel) {
+            elements.modelSelector.value = firstFreeModel.id;
+            state.customModel = firstFreeModel.id;
+        } else if (sortedModels.length > 0) {
+            elements.modelSelector.value = sortedModels[0].id;
+            state.customModel = sortedModels[0].id;
+        }
+    } else {
+        console.log('No models found in response');
+        // Fallback option if no models loaded
+        const fallbackOption = document.createElement('option');
+        fallbackOption.value = 'openai/gpt-oss-20b';
+        fallbackOption.textContent = 'GPT-OSS 20B';
+        elements.modelSelector.appendChild(fallbackOption);
+        state.customModel = 'openai/gpt-oss-20b';
+    }
+}
+
+function openSettingsModal() {
+    elements.settingsModal.style.display = 'block';
+    // Restore current state
+    if (state.customApiKey) {
+        elements.apiKeyInput.value = state.customApiKey;
+    }
+    if (state.apiKeyValidated) {
+        elements.apiKeyStatus.innerHTML = '<i class="fas fa-check-circle"></i> API key validated';
+        elements.apiKeyStatus.className = 'api-key-status success';
+    }
+}
+
+function closeSettingsModal() {
+    elements.settingsModal.style.display = 'none';
+}
+
+async function handleValidateApiKey() {
+    const apiKey = elements.apiKeyInput.value.trim();
+    
+    if (!apiKey) {
+        elements.apiKeyStatus.innerHTML = '<i class="fas fa-exclamation-circle"></i> Please enter an API key';
+        elements.apiKeyStatus.className = 'api-key-status error';
+        return;
+    }
+    
+    // Show loading state
+    elements.validateApiKey.classList.add('loading');
+    elements.validateApiKey.querySelector('i').className = 'fas fa-spinner';
+    elements.apiKeyStatus.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Validating...';
+    elements.apiKeyStatus.className = 'api-key-status loading';
+    
+    try {
+        const result = await validateApiKey(apiKey);
+        
+        if (result.valid) {
+            elements.apiKeyStatus.innerHTML = '<i class="fas fa-check-circle"></i> ' + result.message;
+            elements.apiKeyStatus.className = 'api-key-status success';
+            state.customApiKey = apiKey;
+            state.apiKeyValidated = true;
+            updateModelSelectorState();
+            await loadModels();
+        } else {
+            elements.apiKeyStatus.innerHTML = '<i class="fas fa-times-circle"></i> ' + result.message;
+            elements.apiKeyStatus.className = 'api-key-status error';
+            elements.apiKeyInput.classList.add('invalid');
+            state.apiKeyValidated = false;
+            updateModelSelectorState();
+        }
+    } catch (error) {
+        elements.apiKeyStatus.innerHTML = '<i class="fas fa-times-circle"></i> Validation failed';
+        elements.apiKeyStatus.className = 'api-key-status error';
+        elements.apiKeyInput.classList.add('invalid');
+        state.apiKeyValidated = false;
+        updateModelSelectorState();
+    } finally {
+        elements.validateApiKey.classList.remove('loading');
+        elements.validateApiKey.querySelector('i').className = 'fas fa-check';
+    }
+}
+
+function handleToggleApiKeyVisibility() {
+    const input = elements.apiKeyInput;
+    const icon = elements.toggleApiKeyVisibility.querySelector('i');
+    
+    if (input.type === 'password') {
+        input.type = 'text';
+        icon.className = 'fas fa-eye-slash';
+    } else {
+        input.type = 'password';
+        icon.className = 'fas fa-eye';
+    }
+}
+
+function handleSaveSettings() {
+    // Update state with current values
+    state.customApiKey = elements.apiKeyInput.value.trim() || null;
+    state.customModel = elements.modelSelector.value || null;
+    
+    // If API key was cleared, reset validation state
+    if (!state.customApiKey) {
+        state.apiKeyValidated = false;
+        state.customModel = null;
+    }
+    
+    // Save to localStorage
+    saveSettings();
+    
+    // Close modal
+    closeSettingsModal();
+    
+    console.log('Settings saved:', { 
+        hasApiKey: !!state.customApiKey, 
+        model: state.customModel,
+        validated: state.apiKeyValidated 
+    });
+}
+
+// Settings Modal Event Listeners
+if (elements.settingsBtn) {
+    elements.settingsBtn.addEventListener('click', openSettingsModal);
+}
+
+if (elements.settingsClose) {
+    elements.settingsClose.addEventListener('click', closeSettingsModal);
+}
+
+if (elements.settingsModal) {
+    elements.settingsModal.addEventListener('click', function(e) {
+        if (e.target === elements.settingsModal) {
+            closeSettingsModal();
+        }
+    });
+}
+
+if (elements.toggleApiKeyVisibility) {
+    elements.toggleApiKeyVisibility.addEventListener('click', handleToggleApiKeyVisibility);
+}
+
+if (elements.validateApiKey) {
+    elements.validateApiKey.addEventListener('click', handleValidateApiKey);
+}
+
+if (elements.apiKeyInput) {
+    elements.apiKeyInput.addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            handleValidateApiKey();
+        }
+    });
+    
+    // Clear validation status and invalid styling when key changes
+    elements.apiKeyInput.addEventListener('input', function() {
+        // Remove invalid styling when user starts typing
+        elements.apiKeyInput.classList.remove('invalid');
+        
+        if (state.customApiKey !== this.value.trim()) {
+            state.apiKeyValidated = false;
+            elements.apiKeyStatus.innerHTML = '';
+            elements.apiKeyStatus.className = 'api-key-status';
+            updateModelSelectorState();
+        }
+    });
+}
+
+if (elements.settingsSave) {
+    elements.settingsSave.addEventListener('click', handleSaveSettings);
+}
 
 // Event Listeners
 console.log('Setting up event listeners...');

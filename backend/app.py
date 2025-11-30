@@ -255,6 +255,8 @@ def api_query_stream():
         query_text = data.get('query', '').strip()
         conversation_history = data.get('conversation_history', [])
         show_reasoning = data.get('show_reasoning', None)
+        custom_api_key = data.get('custom_api_key', None)
+        custom_model = data.get('custom_model', None)
         
         if not query_text:
             return jsonify({"error": "Query text is required"}), 400
@@ -280,7 +282,13 @@ def api_query_stream():
                 yield f"data: {json.dumps({'type': 'metadata', 'data': metadata})}\n\n"
                 
                 # Stream the response
-                for chunk in query_processor.stream_query_response(query_text, metadata, show_reasoning=show_reasoning):
+                for chunk in query_processor.stream_query_response(
+                    query_text, 
+                    metadata, 
+                    show_reasoning=show_reasoning,
+                    custom_api_key=custom_api_key,
+                    custom_model=custom_model
+                ):
                     yield f"data: {json.dumps({'type': 'content', 'data': chunk})}\n\n"
                 
                 # Send completion event
@@ -529,6 +537,116 @@ def api_cache_reset_stats():
     except Exception as e:
         logger.error(f"Error resetting cache stats: {e}", exc_info=True)
         return jsonify({"error": "Failed to reset cache stats"}), 500
+
+@app.route('/api/chutes/validate', methods=['POST'])
+def api_validate_chutes_key():
+    """API endpoint for validating a Chutes API key"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No JSON data provided"}), 400
+        
+        api_key = data.get('api_key', '').strip()
+        if not api_key:
+            return jsonify({"error": "API key is required"}), 400
+        
+        # Test the API key by making a simple request to a free model
+        import requests as http_requests
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        # Use a free model for testing
+        test_data = {
+            "model": "unsloth/gemma-3-4b-it",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "max_tokens": 5,
+            "stream": False
+        }
+        
+        response = http_requests.post(
+            "https://llm.chutes.ai/v1/chat/completions",
+            headers=headers,
+            json=test_data,
+            timeout=15,
+            verify=False
+        )
+        
+        if response.status_code == 200:
+            return jsonify({
+                "valid": True,
+                "message": "API key is valid"
+            })
+        elif response.status_code == 401:
+            return jsonify({
+                "valid": False,
+                "message": "Invalid API key"
+            })
+        else:
+            return jsonify({
+                "valid": False,
+                "message": f"API validation failed: {response.status_code}"
+            })
+            
+    except http_requests.exceptions.Timeout:
+        return jsonify({
+            "valid": False,
+            "message": "Request timed out - try again"
+        })
+    except Exception as e:
+        logger.error(f"Error validating Chutes API key: {e}", exc_info=True)
+        return jsonify({"error": f"Validation failed: {str(e)}"}), 500
+
+@app.route('/api/chutes/models')
+def api_get_chutes_models():
+    """API endpoint for getting available Chutes models"""
+    try:
+        # List of popular LLM models available on Chutes (verified model IDs)
+        # These are the text generation models (LLM type) that work with chat completions
+        models = [
+            # Free models
+            {"id": "openai/gpt-oss-20b", "name": "GPT-OSS 20B", "free": True},
+            {"id": "unsloth/gemma-3-4b-it", "name": "Gemma 3 4B", "free": True},
+            {"id": "zai-org/GLM-4.5-Air", "name": "GLM 4.5 Air", "free": True},
+            {"id": "meituan-longcat/LongCat-Flash-Chat-FP8", "name": "LongCat Flash Chat", "free": True},
+            {"id": "Alibaba-NLP/Tongyi-DeepResearch-30B-A3B", "name": "Tongyi DeepResearch 30B", "free": True},
+            # Paid models
+            {"id": "deepseek-ai/DeepSeek-V3.2-Exp", "name": "DeepSeek V3.2 Exp", "free": False},
+            {"id": "deepseek-ai/DeepSeek-R1-0528", "name": "DeepSeek R1 0528", "free": False},
+            {"id": "deepseek-ai/DeepSeek-R1", "name": "DeepSeek R1", "free": False},
+            {"id": "deepseek-ai/DeepSeek-V3", "name": "DeepSeek V3", "free": False},
+            {"id": "deepseek-ai/DeepSeek-V3.1", "name": "DeepSeek V3.1", "free": False},
+            {"id": "deepseek-ai/DeepSeek-V3.1-Terminus", "name": "DeepSeek V3.1 Terminus", "free": False},
+            {"id": "Qwen/Qwen2.5-72B-Instruct", "name": "Qwen 2.5 72B Instruct", "free": False},
+            {"id": "Qwen/Qwen3-32B", "name": "Qwen3 32B", "free": False},
+            {"id": "Qwen/Qwen3-14B", "name": "Qwen3 14B", "free": False},
+            {"id": "Qwen/Qwen3-235B-A22B-Instruct-2507", "name": "Qwen3 235B Instruct", "free": False},
+            {"id": "Qwen/Qwen3-Next-80B-A3B-Instruct", "name": "Qwen3 Next 80B Instruct", "free": False},
+            {"id": "tngtech/DeepSeek-TNG-R1T2-Chimera", "name": "DeepSeek TNG R1T2 Chimera", "free": False},
+            {"id": "zai-org/GLM-4.6", "name": "GLM 4.6", "free": False},
+            {"id": "zai-org/GLM-4.5", "name": "GLM 4.5", "free": False},
+            {"id": "chutesai/Mistral-Small-3.1-24B-Instruct-2503", "name": "Mistral Small 3.1 24B", "free": False},
+            {"id": "chutesai/Mistral-Small-3.2-24B-Instruct-2506", "name": "Mistral Small 3.2 24B", "free": False},
+            {"id": "openai/gpt-oss-120b", "name": "GPT-OSS 120B", "free": False},
+            {"id": "moonshotai/Kimi-K2-Instruct-0905", "name": "Kimi K2 Instruct", "free": False},
+            {"id": "NousResearch/Hermes-4-405B-FP8", "name": "Hermes 4 405B", "free": False},
+            {"id": "NousResearch/DeepHermes-3-Mistral-24B-Preview", "name": "DeepHermes 3 Mistral 24B", "free": False},
+            {"id": "unsloth/gemma-3-12b-it", "name": "Gemma 3 12B", "free": False},
+            {"id": "unsloth/gemma-3-27b-it", "name": "Gemma 3 27B", "free": False},
+        ]
+        
+        return jsonify({
+            "models": models,
+            "default_model": "openai/gpt-oss-20b"
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting Chutes models: {e}", exc_info=True)
+        return jsonify({"error": "Failed to get models"}), 500
 
 def cleanup_on_exit():
     """Cleanup function called on exit"""
