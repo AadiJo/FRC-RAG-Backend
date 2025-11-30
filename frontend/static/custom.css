@@ -1019,6 +1019,10 @@
     top: 0.8px;
 }
 
+.api-key-status:empty {
+    display: none;
+}
+
 .api-key-status.success {
     color: #22c55e;
 }
@@ -1094,6 +1098,10 @@
 
 .model-status i {
     font-size: 10px;
+}
+
+.model-status:empty {
+    display: none;
 }
 
 .settings-modal-footer {

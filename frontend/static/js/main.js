@@ -76,6 +76,8 @@ async function initializeSettingsModal() {
     // Load system prompt if exists
     if (state.systemPrompt) {
         elements.systemPromptInput.value = state.systemPrompt;
+    } else {
+        elements.systemPromptInput.value = '';
     }
     
     // Setup custom dropdown listeners
@@ -232,6 +234,9 @@ function openSettingsModal() {
     if (state.customApiKey) {
         elements.apiKeyInput.value = state.customApiKey;
     }
+    // Restore system prompt state
+    elements.systemPromptInput.value = state.systemPrompt || '';
+
     if (state.apiKeyValidated) {
         elements.apiKeyStatus.innerHTML = '<i class="fas fa-check-circle"></i> API key validated';
         elements.apiKeyStatus.className = 'api-key-status success';

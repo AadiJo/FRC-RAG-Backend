@@ -53,8 +53,8 @@ export function saveSettings() {
         // Note: We intentionally don't save the API key for security
         // User will need to re-enter it on page reload
         localStorage.setItem('frc_rag_settings', JSON.stringify({
-            customModel: state.customModel,
-            systemPrompt: state.systemPrompt
+            customModel: state.customModel
+            // systemPrompt: state.systemPrompt
             // customApiKey and apiKeyValidated are not persisted
         }));
     } catch (e) {
