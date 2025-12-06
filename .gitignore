@@ -71,3 +71,8 @@ temp/
 
 # Tunnel configs
 ngrok.yml
+
+# Scraper downloads
+scraper/downloads/
+
+scraper/

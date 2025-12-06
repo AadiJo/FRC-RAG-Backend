@@ -1,9 +1,0 @@
-node_modules/
-__pycache__/
-*.pyc
-.env
-venv/
-*.log
-.DS_Store
-# Local configuration
-static/config.js

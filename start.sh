@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Backend Development Server Startup Script
+# FRC RAG Backend Server Startup Script
 # For local development and testing
 
 echo "🤖 Starting FRC RAG Backend Server..."
