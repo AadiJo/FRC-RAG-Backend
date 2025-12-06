@@ -22,6 +22,10 @@ This tool helps FRC teams build on existing knowledge instead of starting from s
 - **Real-time Monitoring**: Performance monitoring and usage statistics with cache hit rates
 - **REST API**: Full API for query processing, feedback, and health monitoring
 
+## What makes FRC RAG different?
+
+Users can upload documents, CAD files, and forum threads in real time, keeping the knowledge base up to date with current season innovations. The system uses multi-season mechanism retrieval and game-piece context mapping to return solutions that are truly relevant to the current challenge. With caching, rate limiting, and real-time monitoring, the platform is designed to be production-ready and deployable, so teams can integrate it into their workflow immediately
+
 ## Quick Start
 
 ### 1. Install Dependencies
@@ -108,3 +112,10 @@ Key environment variables (see `.env.example` for full list):
 | `RATE_LIMIT_REQUESTS` | Requests per minute | `60` |
 | `CHROMA_PATH` | ChromaDB path | `db` |
 | `IMAGES_PATH` | Images directory | `data/images` |
+
+## Planned Additions
+
+* **Dynamic Source Integration**: Real-time document upload capability letting users to add team publications, Chief Delphi threads, and other relevant resources directly to the database during their current session
+* **Visual Search Results**: Multi-modal query responses that combine text solution descriptions with corresponding robot photos and CAD screenshots for complete technical understanding
+* **Mobile Application**: iOS and Android app providing full platform functionality
+* **Shareable Collaboration**: Link generation system enabling teams to share specific search results and findings through persistent URLs for quick information sharing
