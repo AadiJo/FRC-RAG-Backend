@@ -15,6 +15,8 @@ import os
 import time
 import logging
 import json
+from dotenv import load_dotenv
+load_dotenv()
 from datetime import datetime
 import uuid
 from typing import Dict, Any
@@ -26,10 +28,14 @@ from src.server.config import get_config
 from werkzeug.utils import secure_filename
 from src.server.ollama_proxy import OllamaProxy
 from src.server.tunnel import TunnelManager
+from src.server.rate_limiter import DailySearchLimiter
 from src.core.query_processor import QueryProcessor
 from src.utils.feedback_manager import FeedbackManager
 
 Config = get_config()
+
+# Initialize Daily Search Limiter
+search_limiter = DailySearchLimiter(max_daily_searches=10)
 
 # Configure logging
 os.makedirs(os.path.dirname(Config.LOG_FILE), exist_ok=True)
@@ -264,6 +270,32 @@ def api_query_stream():
         custom_api_key = data.get('custom_api_key', None)
         custom_model = data.get('custom_model', None)
         system_prompt = data.get('system_prompt', None)
+        enable_web_search = data.get('enable_web_search', False)
+        enable_youtube_search = data.get('enable_youtube_search', False)
+        custom_youtube_key = data.get('custom_youtube_key', None)
+        custom_serpapi_key = data.get('custom_serpapi_key', None)
+
+        # Check search rate limits if no custom keys provided
+        if (enable_web_search or enable_youtube_search) and not (custom_youtube_key or custom_serpapi_key):
+            # If user has provided ONE key but not the other, and is using the other service, we should still limit?
+            # Logic: If using a service without a custom key, check limit.
+            
+            check_limit = False
+            if enable_web_search and not custom_serpapi_key:
+                check_limit = True
+            if enable_youtube_search and not custom_youtube_key:
+                check_limit = True
+                
+            if check_limit:
+                if not search_limiter.is_allowed(client_id):
+                    remaining = search_limiter.get_remaining(client_id)
+                    return jsonify({
+                        "error": "Daily search limit exceeded. Please add your own API keys in Settings.",
+                        "rate_limit": {"remaining": remaining, "limit": 10},
+                        "timestamp": datetime.now().isoformat()
+                    }), 429
+
+        logger.debug(f"/api/query/stream flags enable_web_search={enable_web_search} enable_youtube_search={enable_youtube_search}")
         
         if not query_text:
             return jsonify({"error": "Query text is required"}), 400
@@ -278,14 +310,29 @@ def api_query_stream():
             try:
                 # First, send metadata (images, matched pieces, etc.)
                 enable_filtering = data.get('enable_filtering', False)  # Only enable if requested
-                metadata = query_processor.prepare_query_metadata(query_text, k, enable_filtering=enable_filtering,
-                                                                  conversation_history=conversation_history)
+                metadata = query_processor.prepare_query_metadata(
+                    query_text,
+                    k,
+                    enable_filtering=enable_filtering,
+                    conversation_history=conversation_history,
+                    enable_web_search=enable_web_search,
+                    enable_youtube_search=enable_youtube_search,
+                    custom_serpapi_key=custom_serpapi_key,
+                    custom_youtube_key=custom_youtube_key
+                )
+
+                logger.debug(f"metadata images={len(metadata.get('images', []))} external_sources_len={len(metadata.get('external_sources_section',''))}")
                 
                 if "error" in metadata:
                     yield f"data: {json.dumps({'error': metadata['error']})}\n\n"
                     return
                 
                 # Send metadata event
+                # Include search quota info if available
+                if not (custom_serpapi_key or custom_youtube_key):
+                    remaining = search_limiter.get_remaining(client_id)
+                    metadata['search_quota'] = {'remaining': remaining, 'limit': 10}
+                
                 yield f"data: {json.dumps({'type': 'metadata', 'data': metadata})}\n\n"
                 
                 # Stream the response
@@ -295,7 +342,9 @@ def api_query_stream():
                     show_reasoning=show_reasoning,
                     custom_api_key=custom_api_key,
                     custom_model=custom_model,
-                    system_prompt=system_prompt
+                    system_prompt=system_prompt,
+                    enable_web_search=enable_web_search,
+                    enable_youtube_search=enable_youtube_search
                 ):
                     yield f"data: {json.dumps({'type': 'content', 'data': chunk})}\n\n"
                 
@@ -710,6 +759,18 @@ def api_get_chutes_models():
         logger.error(f"Error getting Chutes models: {e}", exc_info=True)
         return jsonify({"error": "Failed to get models"}), 500
 
+@app.route('/api/quota', methods=['GET'])
+def get_quota():
+    """API endpoint for getting the current daily search quota"""
+    client_id = request.headers.get('X-User-Id') or request.remote_addr
+    # If custom keys are present, unlimited quota
+    custom_youtube_key = request.args.get('custom_youtube_key')
+    custom_serpapi_key = request.args.get('custom_serpapi_key')
+    if custom_youtube_key or custom_serpapi_key:
+        return jsonify({"remaining": None, "limit": None, "unlimited": True})
+    remaining = search_limiter.get_remaining(client_id)
+    return jsonify({"remaining": remaining, "limit": 10, "unlimited": False})
+
 def cleanup_on_exit():
     """Cleanup function called on exit"""
     logger.info("Shutting down server...")
@@ -724,6 +785,10 @@ if __name__ == '__main__':
     if Config.MODEL_PROVIDER == 'local':
         logger.info(f"Ollama: {Config.get_ollama_url()}")
     logger.info("="*60)
+    
+    # Debug: Log API keys on startup
+    print(f"[DEBUG] SERPAPI_KEY: {os.getenv('SERPAPI_KEY')}")
+    print(f"[DEBUG] YOUTUBE_API_KEY: {os.getenv('YOUTUBE_API_KEY')}")
     
     # Initialize query processor
     if init_query_processor():

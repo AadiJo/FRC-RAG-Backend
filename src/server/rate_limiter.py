@@ -122,3 +122,41 @@ class RateLimiter:
                 'window_seconds': self.window_seconds,
                 'max_requests_per_window': self.max_requests
             }
+
+class DailySearchLimiter:
+    """
+    Rate limiter specifically for external search usage (Web/YouTube).
+    Tracks usage per client ID for a 24-hour period.
+    """
+    def __init__(self, max_daily_searches: int = 10):
+        self.max_daily_searches = max_daily_searches
+        # Dictionary: client_id -> {'count': int, 'date': str (YYYY-MM-DD)}
+        self.usage = defaultdict(lambda: {'count': 0, 'date': datetime.now().strftime('%Y-%m-%d')})
+        self.lock = Lock()
+
+    def is_allowed(self, client_id: str) -> bool:
+        """Check if client can perform a search today"""
+        with self.lock:
+            today = datetime.now().strftime('%Y-%m-%d')
+            user_data = self.usage[client_id]
+            
+            # Reset if new day
+            if user_data['date'] != today:
+                user_data['date'] = today
+                user_data['count'] = 0
+            
+            if user_data['count'] < self.max_daily_searches:
+                user_data['count'] += 1
+                return True
+            
+            return False
+
+    def get_remaining(self, client_id: str) -> int:
+        with self.lock:
+            today = datetime.now().strftime('%Y-%m-%d')
+            user_data = self.usage[client_id]
+            
+            if user_data['date'] != today:
+                return self.max_daily_searches
+            
+            return max(0, self.max_daily_searches - user_data['count'])

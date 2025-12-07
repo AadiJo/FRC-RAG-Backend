@@ -21,6 +21,7 @@ from ..utils.query_cache import QueryCache, ChunkCache
 from ..utils.feedback_manager import FeedbackManager
 from ..server.chutes_client import ChutesClient
 from ..server.config import get_config
+from ..utils.citation_formatter import format_web_citation, format_youtube_citation
 
 Config = get_config()
 
@@ -180,11 +181,16 @@ class QueryProcessor:
         
         # Enhanced prompt template
         self.prompt_template = """
-You are an expert FRC (FIRST Robotics Competition) assistant. Answer the question based on the following context and game piece information:
+You are an expert FRC (FIRST Robotics Competition) assistant. Answer the question based on the following context and game piece information.
+
+IMPORTANT:
+- If "EXTERNAL SOURCES" are provided in the context, prioritize them for recent events, game names, and current season information (e.g., 2025, 2026).
+- Technical documents might be from previous years. Always check the dates or source titles.
+- If the answer is found in the external sources, cite them using the format [Source Name].
 
 {conversation_history}
 
-CONTEXT FROM TECHNICAL DOCUMENTS:
+CONTEXT FROM TECHNICAL DOCUMENTS AND EXTERNAL SOURCES:
 {context}
 
 GAME PIECE INFORMATION:
@@ -208,7 +214,18 @@ Instructions:
 7. If a user defined a game piece, say how it might be similar to dealing with a known piece
 8. When answering queries about designs, give pros and cons based on the context, along with steps to implement with CAD screenshots or build tips
 9. When referencing anything, make sure to attach the image if one is available
+10. If an EXTERNAL SOURCES section is provided, treat those links/snippets as the highest-priority evidence: cite them explicitly and prefer their facts over older context. If web sources disagree, call it out and favor the most recent-looking source.
 """
+
+    def _build_citation_section(self, web_citations, youtube_citations) -> str:
+        if not web_citations and not youtube_citations:
+            return ""
+        lines = []
+        for c in web_citations:
+            lines.append(f"• {c}")
+        for c in youtube_citations:
+            lines.append(f"• {c}")
+        return "\nEXTERNAL SOURCES:\n" + "\n".join(lines)
 
     def _ensure_ollama_running(self):
         """Ensure Ollama service is running and model is available"""
@@ -356,7 +373,7 @@ Instructions:
                 yield "I encountered an issue generating the response. Please try again."
 
     def process_query(self, query: str, k: int = 10, enable_filtering: bool = None, target_docs: int = 8, 
-                     conversation_history: List[Dict] = None) -> Dict[str, Any]:
+                     conversation_history: List[Dict] = None, enable_web_search: bool = False, enable_youtube_search: bool = False) -> Dict[str, Any]:
         """
         Process a user query with game piece enhancement, caching, and optional post-processing
         Returns a comprehensive response with context and metadata
@@ -455,7 +472,26 @@ Instructions:
         
         # Step 3: Collect context parts and apply post-processing filtering
         context_parts = [doc.page_content for doc in results]
-        
+
+        # --- Web and YouTube Search Integration ---
+        web_results, youtube_results = [], []
+        web_citations, youtube_citations = [], []
+        print(f"[DEBUG] enable_web_search flag: {enable_web_search}")
+        if enable_web_search:
+            print(f"[DEBUG] Attempting SerpAPI web search for query: '{query}'")
+            try:
+                from ..utils.web_and_youtube_search import web_search
+                web_results = web_search(query, num_results=3)
+                print(f"[DEBUG] SerpAPI web_search results: {web_results}")
+                web_citations = [format_web_citation(r) for r in web_results]
+            except Exception as e:
+                print(f"[ERROR] Web search error: {e}")
+
+        # Merge citations into context
+        citation_section = ""
+        if web_citations or youtube_citations:
+            citation_section = self._build_citation_section(web_citations, youtube_citations)
+
         # Apply post-processing filter if enabled
         if use_filtering and self.post_processor:
             filtered_context_parts = self.post_processor.filter_documents(
@@ -463,16 +499,12 @@ Instructions:
                 documents=context_parts,
                 target_count=target_docs
             )
-            
             # If filtering removed everything, fall back to original (take top k)
             if not filtered_context_parts:
                 print("Warning: All documents filtered out, using original top k results")
                 filtered_context_parts = context_parts[:k]
-            
             # Update context_parts and results to match filtered content
             context_parts = filtered_context_parts
-            
-            # Update results list to match filtered context (for image collection)
             filtered_results = []
             for filtered_content in filtered_context_parts:
                 for doc in results:
@@ -481,30 +513,37 @@ Instructions:
                         break
             results = filtered_results
         else:
-            # No filtering, just limit to original k
             context_parts = context_parts[:k]
             results = results[:k]
-        
+
         # Step 4: Collect related images from filtered results
         related_images = []
         for doc in results:
             images = self._collect_images_from_result(doc)
             related_images.extend(images)
-            
+
         # --- Image Search ---
         if self.enable_image_search:
             print("Searching for images using embeddings...")
             image_results = self.search_images(query, k=4)
             related_images.extend(image_results)
-        
+
         # Remove duplicate images based on filename
         seen_filenames = set()
         unique_images = []
         for img in related_images:
             if img['filename'] not in seen_filenames:
+                # Calculate relevance score for image
+                relevance = None
+                # If image has OCR/text, use that for relevance
+                if 'ocr_text' in img and img['ocr_text']:
+                    relevance = self.post_processor.calculate_relevance_score(query, img['ocr_text']) if self.post_processor else None
+                elif 'formatted_context' in img and img['formatted_context']:
+                    relevance = self.post_processor.calculate_relevance_score(query, img['formatted_context']) if self.post_processor else None
+                img['relevance'] = relevance
                 unique_images.append(img)
                 seen_filenames.add(img['filename'])
-        
+
         # Step 5: Generate game piece context
         game_piece_context = ""
         if matched_pieces:
@@ -512,28 +551,27 @@ Instructions:
 
         # Step 6: Generate AI response using filtered context
         context_text = "\n\n---\n\n".join(context_parts)
-        
+        if citation_section:
+            context_text += citation_section
+
         # Build conversation history text
         history_text = ""
         if conversation_history:
             history_text = "\n\nPREVIOUS CONVERSATION:\n"
-            # Include last 6 messages (3 exchanges) to keep context manageable
             recent_history = conversation_history[-6:]
             for msg in recent_history:
                 role = "User" if msg.get('role') == 'user' else "Assistant"
                 content = msg.get('content', '')
-                # Truncate very long messages to save tokens
                 if len(content) > 300:
                     content = content[:300] + "..."
                 history_text += f"{role}: {content}\n"
             history_text += "\n---\n"
-        
+
         # Get feedback examples
         feedback_examples = ""
         try:
             good_examples = self.feedback_manager.get_good_examples()
             if good_examples:
-                # Simple filtering: just take the last 3
                 feedback_text = []
                 for ex in good_examples[:3]:
                     feedback_text.append(f"Q: {ex['query']}\nA: {ex['response']}")
@@ -559,6 +597,21 @@ Instructions:
             if game_piece_context:
                 response_text += f"\n\nGame Piece Information:\n{game_piece_context}"
 
+        # Prepare structured external sources for frontend (consistent with prepare_query_metadata)
+        external_sources = []
+        for r in web_results:
+            external_sources.append({
+                "type": "web",
+                "title": r.get("title"),
+                "link": r.get("link"),
+                "snippet": r.get("snippet"),
+                "source": "Web"
+            })
+        for r in youtube_results: # Note: youtube_results was populated earlier if enabled
+             # Wait, youtube_results is populated in the web search block above?
+             # Let's check lines 460-480
+             pass
+
         response = {
             "response": response_text,
             "matched_pieces": matched_pieces,
@@ -566,7 +619,9 @@ Instructions:
             "original_query": query,
             "context_sources": len(context_parts),  # Use filtered count
             "related_images": unique_images,
-            "game_piece_context": game_piece_context
+            "game_piece_context": game_piece_context,
+            "external_sources_section": citation_section if citation_section else "",
+            "external_sources": external_sources
         }
         
         # Add post-processing information if applied
@@ -797,7 +852,12 @@ Instructions:
         else:
             print("⚠️  Cache is disabled")    
     def prepare_query_metadata(self, query: str, k: int = 10, enable_filtering: bool = None, 
-                              conversation_history: List[Dict] = None) -> Dict[str, Any]:
+                              conversation_history: List[Dict] = None,
+                              enable_web_search: bool = False,
+                              enable_youtube_search: bool = False,
+                              custom_serpapi_key: str = None,
+                              custom_youtube_key: str = None) -> Dict[str, Any]:
+        print(f"[DEBUG] prepare_query_metadata web_search={enable_web_search} youtube_search={enable_youtube_search}")
         """
         Prepare metadata for a query (images, matched pieces, etc.) without generating the response.
         This is used for streaming to send metadata first.
@@ -876,13 +936,36 @@ Instructions:
             images = self._collect_images_from_result(doc)
             related_images.extend(images)
         
-        # Remove duplicate images
+        # Remove duplicate images and compute relevance
         seen_filenames = set()
         unique_images = []
         for img in related_images:
             if img['filename'] not in seen_filenames:
+                relevance = None
+                if self.post_processor:
+                    text_basis = img.get('ocr_text') or img.get('formatted_context') or img.get('context_summary')
+                    if text_basis:
+                        relevance = self.post_processor.calculate_relevance_score(query, text_basis)
+                img['relevance'] = relevance
                 unique_images.append(img)
                 seen_filenames.add(img['filename'])
+
+        # Add embedding-based image search results (SigLIP) for metadata flow
+        if self.enable_image_search:
+            try:
+                embed_images = self.search_images(query, k=4)
+                for img in embed_images:
+                    relevance = None
+                    if self.post_processor:
+                        text_basis = img.get('ocr_text') or img.get('formatted_context') or img.get('context_summary')
+                        if text_basis:
+                            relevance = self.post_processor.calculate_relevance_score(query, text_basis)
+                    img['relevance'] = relevance
+                    if img['filename'] not in seen_filenames:
+                        unique_images.append(img)
+                        seen_filenames.add(img['filename'])
+            except Exception as e:
+                print(f"Warning: embedding image search failed: {e}")
         
         # Process images for web display
         from ..server.config import get_config
@@ -901,9 +984,57 @@ Instructions:
                 'exists': img_exists,
                 'ocr_text': img.get('ocr_text', ''),
                 'formatted_context': img.get('formatted_context', ''),
-                'context_summary': img.get('context_summary', img.get('ocr_text', '')[:200] + ('...' if len(img.get('ocr_text', '')) > 200 else ''))
+                'context_summary': img.get('context_summary', img.get('ocr_text', '')[:200] + ('...' if len(img.get('ocr_text', '')) > 200 else '')),
+                'relevance': img.get('relevance')
             })
+
+        # Web/YouTube search for metadata
+        web_results = []
+        yt_results = []
+        web_citations, youtube_citations = [], []
+        citation_section = ""
         
+        if enable_web_search:
+            try:
+                from ..utils.web_and_youtube_search import web_search
+                web_results = web_search(query, num_results=3, api_key=custom_serpapi_key)
+                print(f"[DEBUG] Metadata web_search results: {len(web_results)}")
+                web_citations = [format_web_citation(r) for r in web_results]
+            except Exception as e:
+                print(f"[ERROR] Web search error (metadata): {e}")
+        
+        if enable_youtube_search:
+            try:
+                from ..utils.web_and_youtube_search import youtube_search
+                yt_results = youtube_search(query, num_results=2, api_key=custom_youtube_key)
+                print(f"[DEBUG] Metadata youtube_search results: {len(yt_results)}")
+                youtube_citations = [format_youtube_citation(r) for r in yt_results]
+            except Exception as e:
+                print(f"[ERROR] YouTube search error (metadata): {e}")
+
+        if web_citations or youtube_citations:
+            citation_section = self._build_citation_section(web_citations, youtube_citations)
+        
+        # Prepare structured external sources for frontend
+        external_sources = []
+        for r in web_results:
+            external_sources.append({
+                "type": "web",
+                "title": r.get("title"),
+                "link": r.get("link"),
+                "snippet": r.get("snippet"),
+                "source": "Web"
+            })
+        for r in yt_results:
+            external_sources.append({
+                "type": "youtube",
+                "title": r.get("title"),
+                "link": r.get("link"),
+                "snippet": r.get("description"),
+                "channel": r.get("channel"),
+                "source": "YouTube"
+            })
+
         # Generate game piece context
         game_piece_context = ""
         if matched_pieces:
@@ -918,11 +1049,14 @@ Instructions:
             "images_count": len(web_images),
             "game_piece_context": game_piece_context,
             "context_parts": context_parts,
-            "conversation_history": conversation_history or []
+            "conversation_history": conversation_history or [],
+            "external_sources_section": citation_section,
+            "external_sources": external_sources
         }
     
     def stream_query_response(self, query: str, metadata: Dict[str, Any], show_reasoning: bool = None,
-                               custom_api_key: str = None, custom_model: str = None, system_prompt: str = None):
+                               custom_api_key: str = None, custom_model: str = None, system_prompt: str = None,
+                               enable_web_search: bool = False, enable_youtube_search: bool = False):
         """
         Stream the LLM response for a query.
         Yields chunks of text as they're generated.
@@ -936,6 +1070,9 @@ Instructions:
             system_prompt: Optional system prompt override
         """
         context_text = "\n\n---\n\n".join(metadata['context_parts'])
+        citation_section = metadata.get('external_sources_section', '')
+        if citation_section:
+            context_text += citation_section
         game_piece_context = metadata.get('game_piece_context', '')
         conversation_history = metadata.get('conversation_history', [])
         
