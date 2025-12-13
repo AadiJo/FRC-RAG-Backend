@@ -19,7 +19,7 @@ from .game_piece_mapper import GamePieceMapper
 from .image_embedder import ImageEmbedder
 from ..utils.query_cache import QueryCache, ChunkCache
 from ..utils.feedback_manager import FeedbackManager
-from ..server.chutes_client import ChutesClient
+from ..server.openrouter_client import OpenRouterClient
 from ..server.config import get_config
 from ..utils.citation_formatter import format_web_citation, format_youtube_citation
 
@@ -317,24 +317,32 @@ Instructions:
 
     def _init_model_client(self):
         """Initialize the appropriate model client based on configuration"""
-        if Config.MODEL_PROVIDER == 'chute':
+        provider = Config.MODEL_PROVIDER
+        if provider == 'chute':
+            provider = 'openrouter'
+
+        if provider == 'openrouter':
             try:
-                self.chutes_client = ChutesClient()
-                print(f"✅ Chutes AI client initialized for model provider: {Config.MODEL_PROVIDER}")
+                self.openrouter_client = OpenRouterClient()
+                print(f"✅ OpenRouter client initialized for model provider: {provider}")
             except Exception as e:
-                print(f"❌ Failed to initialize Chutes client: {e}")
-                self.chutes_client = None
+                print(f"❌ Failed to initialize OpenRouter client: {e}")
+                self.openrouter_client = None
         else:
-            self.chutes_client = None
-            print(f"✅ Using local Ollama for model provider: {Config.MODEL_PROVIDER}")
+            self.openrouter_client = None
+            print(f"✅ Using local Ollama for model provider: {provider}")
 
     def _generate_response(self, prompt: str, show_reasoning: bool = None) -> str:
         """Generate response using the configured model provider"""
-        if Config.MODEL_PROVIDER == 'chute' and self.chutes_client:
+        provider = Config.MODEL_PROVIDER
+        if provider == 'chute':
+            provider = 'openrouter'
+
+        if provider == 'openrouter' and getattr(self, 'openrouter_client', None):
             try:
-                return self.chutes_client.chat_completion(prompt, show_reasoning=show_reasoning)
+                return self.openrouter_client.chat_completion(prompt, show_reasoning=show_reasoning)
             except Exception as e:
-                print(f"❌ Chutes AI request failed: {e}")
+                print(f"❌ OpenRouter request failed: {e}")
                 # Fallback to basic response
                 return "I encountered an issue generating the response. Please try again."
         else:
@@ -349,9 +357,13 @@ Instructions:
     def _generate_response_stream(self, prompt: str, show_reasoning: bool = None, 
                                     custom_api_key: str = None, custom_model: str = None, system_prompt: str = None):
         """Generate streaming response using the configured model provider"""
-        if Config.MODEL_PROVIDER == 'chute' and self.chutes_client:
+        provider = Config.MODEL_PROVIDER
+        if provider == 'chute':
+            provider = 'openrouter'
+
+        if provider == 'openrouter' and getattr(self, 'openrouter_client', None):
             try:
-                for chunk in self.chutes_client.chat_completion_stream(
+                for chunk in self.openrouter_client.chat_completion_stream(
                     prompt, 
                     show_reasoning=show_reasoning,
                     custom_api_key=custom_api_key,
@@ -360,7 +372,7 @@ Instructions:
                 ):
                     yield chunk
             except Exception as e:
-                print(f"❌ Chutes AI streaming failed: {e}")
+                print(f"❌ OpenRouter streaming failed: {e}")
                 yield "I encountered an issue generating the response. Please try again."
         else:
             # Use Ollama streaming

@@ -40,11 +40,11 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Edit `.env` and set your Chutes AI API token:
+Edit `.env` and set your OpenRouter API key:
 
 ```env
-MODEL_PROVIDER=chute
-CHUTES_API_TOKEN=your-api-token-here
+MODEL_PROVIDER=openrouter
+OPENROUTER_API_KEY=your-api-key-here
 ```
 
 ### 3. Run the Server
@@ -73,7 +73,7 @@ The API will be available at `http://localhost:5000`
 │   │   ├── config.py             # Configuration management
 │   │   ├── rate_limiter.py       # Rate limiting
 │   │   ├── ollama_proxy.py       # Ollama proxy
-│   │   ├── chutes_client.py      # Chutes AI client
+│   │   ├── openrouter_client.py  # OpenRouter client
 │   │   └── tunnel.py             # Tunneling utilities
 │   └── utils/             # Utilities
 │       ├── database_setup.py     # Database initialization
@@ -108,8 +108,8 @@ Key environment variables (see `.env.example` for full list):
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `MODEL_PROVIDER` | LLM provider (`chute` or `local`) | `local` |
-| `CHUTES_API_TOKEN` | Chutes AI API token | - |
+| `MODEL_PROVIDER` | LLM provider (`openrouter` or `local`) | `local` |
+| `OPENROUTER_API_KEY` | OpenRouter API key | - |
 | `SERVER_PORT` | Port to listen on | `5000` |
 | `RATE_LIMIT_REQUESTS` | Requests per minute | `60` |
 | `CHROMA_PATH` | ChromaDB path | `db` |

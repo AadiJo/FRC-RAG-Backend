@@ -36,16 +36,29 @@ fi
 # Create logs directory
 mkdir -p logs
 
-# Check if Ollama is running
-echo "🤖 Checking Ollama service..."
-if ! curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
-    echo "⚠️  Ollama is not running. Please start Ollama:"
-    echo "   ollama serve"
-    echo ""
-    echo "And install required models:"
-    echo "   ollama pull mistral"
-    echo ""
-    read -p "Press Enter when Ollama is ready..."
+# Detect model provider from .env (default: local)
+MODEL_PROVIDER_VALUE="local"
+if [ -f ".env" ]; then
+    MODEL_PROVIDER_VALUE=$(grep -E '^MODEL_PROVIDER=' .env | tail -n 1 | cut -d '=' -f 2- | tr -d '\r' | tr -d '"' | tr -d "'")
+fi
+if [ "$MODEL_PROVIDER_VALUE" = "chute" ]; then
+    MODEL_PROVIDER_VALUE="openrouter"
+fi
+
+# Check if Ollama is running (only needed for local provider)
+if [ "$MODEL_PROVIDER_VALUE" = "local" ] || [ -z "$MODEL_PROVIDER_VALUE" ]; then
+    echo "🤖 Checking Ollama service..."
+    if ! curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
+        echo "⚠️  Ollama is not running. Please start Ollama:"
+        echo "   ollama serve"
+        echo ""
+        echo "And install required models:"
+        echo "   ollama pull mistral"
+        echo ""
+        read -p "Press Enter when Ollama is ready..."
+    fi
+else
+    echo "🤖 Model provider is '$MODEL_PROVIDER_VALUE' — skipping Ollama check."
 fi
 
 # Check if database exists

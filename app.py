@@ -103,10 +103,14 @@ def log_request():
 @app.route('/health')
 def health_check():
     """Comprehensive health check endpoint"""
-    ollama_healthy = ollama_proxy.check_health() if Config.MODEL_PROVIDER == 'local' else True
-    chutes_healthy = False
-    if Config.MODEL_PROVIDER == 'chute' and query_processor and hasattr(query_processor, 'chutes_client') and query_processor.chutes_client:
-        chutes_healthy = query_processor.chutes_client.check_health()
+    provider = Config.MODEL_PROVIDER
+    if provider == 'chute':
+        provider = 'openrouter'
+
+    ollama_healthy = ollama_proxy.check_health() if provider == 'local' else True
+    openrouter_healthy = False
+    if provider == 'openrouter' and query_processor and hasattr(query_processor, 'openrouter_client') and query_processor.openrouter_client:
+        openrouter_healthy = query_processor.openrouter_client.check_health()
     
     stats = ollama_proxy.get_stats()
     tunnel_status = tunnel_manager.get_status()
@@ -120,10 +124,7 @@ def health_check():
             logger.warning(f"Could not get cache stats: {e}")
     
     # Determine overall status based on provider
-    if Config.MODEL_PROVIDER == 'chute':
-        model_healthy = chutes_healthy
-    else:
-        model_healthy = ollama_healthy
+    model_healthy = openrouter_healthy if provider == 'openrouter' else ollama_healthy
         
     status = "healthy" if model_healthy and query_processor else "degraded"
     
@@ -131,8 +132,8 @@ def health_check():
         "status": status,
         "timestamp": datetime.now().isoformat(),
         "components": {
-            "ollama": ollama_healthy if Config.MODEL_PROVIDER == 'local' else None,
-            "chutes_ai": chutes_healthy if Config.MODEL_PROVIDER == 'chute' else None,
+            "ollama": ollama_healthy if provider == 'local' else None,
+            "openrouter": openrouter_healthy if provider == 'openrouter' else None,
             "query_processor": query_processor is not None,
             "chroma_db": os.path.exists(Config.CHROMA_PATH),
             "images": os.path.exists(Config.IMAGES_PATH)
@@ -649,125 +650,151 @@ def api_cache_reset_stats():
         logger.error(f"Error resetting cache stats: {e}", exc_info=True)
         return jsonify({"error": "Failed to reset cache stats"}), 500
 
-@app.route('/api/chutes/validate', methods=['POST'])
-def api_validate_chutes_key():
-    """API endpoint for validating a Chutes API key"""
+def _extract_openrouter_key_from_request() -> str:
+    # Prefer explicit custom header, then query/body, then Authorization Bearer
+    key = (request.headers.get('X-OpenRouter-Key') or '').strip()
+    if key:
+        return key
+    key = (request.args.get('api_key') or '').strip()
+    if key:
+        return key
     try:
-        data = request.get_json()
-        if not data:
-            return jsonify({"error": "No JSON data provided"}), 400
-        
-        api_key = data.get('api_key', '').strip()
+        body = request.get_json(silent=True) or {}
+        key = (body.get('api_key') or '').strip()
+        if key:
+            return key
+    except Exception:
+        pass
+    auth = (request.headers.get('Authorization') or '').strip()
+    if auth.lower().startswith('bearer '):
+        return auth.split(' ', 1)[1].strip()
+    return ''
+
+
+@app.route('/api/openrouter/validate', methods=['POST'])
+@app.route('/api/chutes/validate', methods=['POST'])  # backward-compat alias
+def api_validate_openrouter_key():
+    """Validate an OpenRouter API key (alias: /api/chutes/validate)."""
+    try:
+        api_key = _extract_openrouter_key_from_request()
         if not api_key:
             return jsonify({"error": "API key is required"}), 400
-        
-        # Test the API key by making a simple request to a free model
-        import requests as http_requests
-        import urllib3
-        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-        
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json"
-        }
-        
-        # Use a free model for testing
-        test_data = {
-            "model": "unsloth/gemma-3-4b-it",
-            "messages": [{"role": "user", "content": "Hi"}],
-            "max_tokens": 5,
-            "stream": False
-        }
-        
-        response = http_requests.post(
-            "https://llm.chutes.ai/v1/chat/completions",
-            headers=headers,
-            json=test_data,
-            timeout=15,
-            verify=False
-        )
-        
-        if response.status_code == 200:
-            return jsonify({
-                "valid": True,
-                "message": "API key is valid"
-            })
-        elif response.status_code == 401:
-            return jsonify({
-                "valid": False,
-                "message": "Invalid API key"
-            })
-        else:
-            return jsonify({
-                "valid": False,
-                "message": f"API validation failed: {response.status_code}"
-            })
-            
-    except http_requests.exceptions.Timeout:
-        return jsonify({
-            "valid": False,
-            "message": "Request timed out - try again"
-        })
+
+        import requests
+        from src.server.openrouter_client import OpenRouterClient
+        client = OpenRouterClient()
+
+        try:
+            # Fast auth check
+            client.list_models(api_key=api_key)
+            return jsonify({"valid": True, "message": "API key is valid"})
+        except requests.exceptions.HTTPError as e:
+            status = getattr(getattr(e, 'response', None), 'status_code', None)
+            if status == 401:
+                return jsonify({"valid": False, "message": "Invalid API key"})
+            return jsonify({"valid": False, "message": f"API validation failed: {status or 'error'}"})
+        except Exception as e:
+            return jsonify({"valid": False, "message": f"API validation failed: {str(e)}"})
+
     except Exception as e:
-        logger.error(f"Error validating Chutes API key: {e}", exc_info=True)
+        logger.error(f"Error validating OpenRouter API key: {e}", exc_info=True)
         return jsonify({"error": f"Validation failed: {str(e)}"}), 500
 
-@app.route('/api/chutes/models')
-def api_get_chutes_models():
-    """API endpoint for getting available Chutes models"""
+@app.route('/api/openrouter/models')
+@app.route('/api/chutes/models')  # backward-compat alias
+def api_get_openrouter_models():
+    """Get available OpenRouter models (alias: /api/chutes/models)."""
     try:
-        # List of popular LLM models available on Chutes (verified model IDs)
-        # These are the text generation models (LLM type) that work with chat completions
-        models = [
-            # Free models
-            {"id": "openai/gpt-oss-20b", "name": "GPT-OSS 20B", "free": True},
-            {"id": "unsloth/gemma-3-4b-it", "name": "Gemma 3 4B", "free": True},
-            {"id": "zai-org/GLM-4.5-Air", "name": "GLM 4.5 Air", "free": True},
-            {"id": "meituan-longcat/LongCat-Flash-Chat-FP8", "name": "LongCat Flash Chat", "free": True},
-            {"id": "Alibaba-NLP/Tongyi-DeepResearch-30B-A3B", "name": "Tongyi DeepResearch 30B", "free": True},
-            # Paid models
-            {"id": "deepseek-ai/DeepSeek-V3.2-Exp", "name": "DeepSeek V3.2 Exp", "free": False},
-            {"id": "deepseek-ai/DeepSeek-R1-0528", "name": "DeepSeek R1 0528", "free": False},
-            {"id": "deepseek-ai/DeepSeek-R1", "name": "DeepSeek R1", "free": False},
-            {"id": "deepseek-ai/DeepSeek-V3", "name": "DeepSeek V3", "free": False},
-            {"id": "deepseek-ai/DeepSeek-V3.1", "name": "DeepSeek V3.1", "free": False},
-            {"id": "deepseek-ai/DeepSeek-V3.1-Terminus", "name": "DeepSeek V3.1 Terminus", "free": False},
-            {"id": "Qwen/Qwen2.5-72B-Instruct", "name": "Qwen 2.5 72B Instruct", "free": False},
-            {"id": "Qwen/Qwen3-32B", "name": "Qwen3 32B", "free": False},
-            {"id": "Qwen/Qwen3-14B", "name": "Qwen3 14B", "free": False},
-            {"id": "Qwen/Qwen3-235B-A22B-Instruct-2507", "name": "Qwen3 235B Instruct", "free": False},
-            {"id": "Qwen/Qwen3-Next-80B-A3B-Instruct", "name": "Qwen3 Next 80B Instruct", "free": False},
-            {"id": "tngtech/DeepSeek-TNG-R1T2-Chimera", "name": "DeepSeek TNG R1T2 Chimera", "free": False},
-            {"id": "zai-org/GLM-4.6", "name": "GLM 4.6", "free": False},
-            {"id": "zai-org/GLM-4.5", "name": "GLM 4.5", "free": False},
-            {"id": "chutesai/Mistral-Small-3.1-24B-Instruct-2503", "name": "Mistral Small 3.1 24B", "free": False},
-            {"id": "chutesai/Mistral-Small-3.2-24B-Instruct-2506", "name": "Mistral Small 3.2 24B", "free": False},
-            {"id": "openai/gpt-oss-120b", "name": "GPT-OSS 120B", "free": False},
-            {"id": "moonshotai/Kimi-K2-Instruct-0905", "name": "Kimi K2 Instruct", "free": False},
-            {"id": "NousResearch/Hermes-4-405B-FP8", "name": "Hermes 4 405B", "free": False},
-            {"id": "NousResearch/DeepHermes-3-Mistral-24B-Preview", "name": "DeepHermes 3 Mistral 24B", "free": False},
-            {"id": "unsloth/gemma-3-12b-it", "name": "Gemma 3 12B", "free": False},
-            {"id": "unsloth/gemma-3-27b-it", "name": "Gemma 3 27B", "free": False},
+        # Curated fallback list (works without hitting OpenRouter)
+        fallback_models = [
+            {"id": "openai/gpt-oss-20b", "name": "OpenAI gpt-oss-20b (Recommended)", "free": False},
+            {"id": "openai/gpt-4o-mini", "name": "GPT-4o mini", "free": False},
+            {"id": "anthropic/claude-3.5-sonnet", "name": "Claude 3.5 Sonnet", "free": False},
+            {"id": "google/gemini-1.5-flash", "name": "Gemini 1.5 Flash", "free": False},
+            {"id": "mistralai/mistral-small", "name": "Mistral Small", "free": False},
+            {"id": "deepseek/deepseek-chat", "name": "DeepSeek Chat", "free": False},
         ]
-        
+
+        api_key = _extract_openrouter_key_from_request() or (Config.OPENROUTER_API_KEY or '').strip() or (Config.CHUTES_API_TOKEN or '').strip()
+        if not api_key:
+            return jsonify({"models": fallback_models, "default_model": Config.OPENROUTER_DEFAULT_MODEL})
+
+        from src.server.openrouter_client import OpenRouterClient
+        client = OpenRouterClient()
+        models = client.list_models(api_key=api_key)
+
+        # Keep list reasonably sized for the UI
+        models = sorted(models, key=lambda m: (not bool(m.get('free')), str(m.get('name', ''))))
+        models = models[:250]
+
         return jsonify({
             "models": models,
-            "default_model": "openai/gpt-oss-20b"
+            "default_model": Config.OPENROUTER_DEFAULT_MODEL,
         })
-        
+
     except Exception as e:
-        logger.error(f"Error getting Chutes models: {e}", exc_info=True)
+        logger.error(f"Error getting OpenRouter models: {e}", exc_info=True)
         return jsonify({"error": "Failed to get models"}), 500
 
 @app.route('/api/quota', methods=['GET'])
 def get_quota():
     """API endpoint for getting the current daily search quota"""
     client_id = request.headers.get('X-User-Id') or request.remote_addr
-    # If custom keys are present, unlimited quota
+    # If custom keys are present for web/youtube, treat as unlimited
     custom_youtube_key = request.args.get('custom_youtube_key')
     custom_serpapi_key = request.args.get('custom_serpapi_key')
+    custom_api_key = request.args.get('custom_api_key')
+
     if custom_youtube_key or custom_serpapi_key:
         return jsonify({"remaining": None, "limit": None, "unlimited": True})
+
+    # If user provided a custom OpenRouter API key, validate it and report that
+    # provider-side quotas are not exposed via the OpenRouter models endpoint.
+    if custom_api_key:
+        try:
+            from src.server.openrouter_client import OpenRouterClient
+            client = OpenRouterClient()
+            # Will raise if key invalid
+            client.list_models(api_key=custom_api_key)
+            # Try to fetch quota info (may return None if provider doesn't expose it)
+            try:
+                quota = client.get_quota(api_key=custom_api_key)
+            except Exception:
+                quota = None
+
+            if quota:
+                # Normalize numeric-like values where possible
+                try:
+                    remaining = int(quota.get('remaining')) if quota.get('remaining') is not None else None
+                except Exception:
+                    remaining = quota.get('remaining')
+                try:
+                    limit = int(quota.get('limit')) if quota.get('limit') is not None else None
+                except Exception:
+                    limit = quota.get('limit')
+
+                result = {
+                    'remaining': remaining,
+                    'limit': limit,
+                    'unlimited': False if (remaining is not None or limit is not None) else True,
+                    'source': quota.get('source')
+                }
+                # Include raw data when available
+                if quota.get('raw'):
+                    result['raw'] = quota.get('raw')
+
+                return jsonify(result)
+
+            # Fall back to generic message if quota couldn't be discovered
+            return jsonify({
+                "remaining": None,
+                "limit": None,
+                "unlimited": True,
+                "message": "OpenRouter key valid — provider quota not exposed via API. Check OpenRouter dashboard."
+            })
+        except Exception as e:
+            return jsonify({"error": f"Invalid OpenRouter key: {str(e)}"}), 400
+
     remaining = search_limiter.get_remaining(client_id)
     return jsonify({"remaining": remaining, "limit": 10, "unlimited": False})
 
@@ -785,10 +812,6 @@ if __name__ == '__main__':
     if Config.MODEL_PROVIDER == 'local':
         logger.info(f"Ollama: {Config.get_ollama_url()}")
     logger.info("="*60)
-    
-    # Debug: Log API keys on startup
-    print(f"[DEBUG] SERPAPI_KEY: {os.getenv('SERPAPI_KEY')}")
-    print(f"[DEBUG] YOUTUBE_API_KEY: {os.getenv('YOUTUBE_API_KEY')}")
     
     # Initialize query processor
     if init_query_processor():

@@ -29,8 +29,24 @@ class Config:
     OLLAMA_TIMEOUT = int(os.getenv('OLLAMA_TIMEOUT', 30))
     
     # Model provider settings
-    MODEL_PROVIDER = os.getenv('MODEL_PROVIDER', 'local')  # 'local' or 'chute'
+    # Provider values:
+    # - 'local' (Ollama)
+    # - 'openrouter' (OpenRouter)
+    # Legacy: 'chute' is treated as OpenRouter for backward compatibility.
+    MODEL_PROVIDER = os.getenv('MODEL_PROVIDER', 'local')
+
+    # Legacy (deprecated): retained for compatibility with older setups
     CHUTES_API_TOKEN = os.getenv('CHUTES_API_TOKEN', '')
+
+    # OpenRouter settings
+    OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY', '')
+    OPENROUTER_BASE_URL = os.getenv('OPENROUTER_BASE_URL', 'https://openrouter.ai/api/v1')
+    # Default to a reasonable OpenAI-compatible model (gpt-oss-20b) when using OpenRouter
+    OPENROUTER_DEFAULT_MODEL = os.getenv('OPENROUTER_DEFAULT_MODEL', 'openai/gpt-oss-20b:free')
+    # Optional but recommended attribution headers
+    OPENROUTER_HTTP_REFERER = os.getenv('OPENROUTER_HTTP_REFERER', '')
+    OPENROUTER_APP_TITLE = os.getenv('OPENROUTER_APP_TITLE', 'FRC RAG')
+
     SHOW_MODEL_REASONING = os.getenv('SHOW_MODEL_REASONING', 'false').lower() == 'true'
     
     # Rate limiting settings
@@ -69,6 +85,9 @@ class Config:
     @classmethod
     def to_dict(cls) -> Dict[str, Any]:
         """Convert config to dictionary (excluding sensitive data)"""
+        provider = cls.MODEL_PROVIDER
+        if provider == 'chute':
+            provider = 'openrouter'
         return {
             'server': {
                 'environment': cls.ENVIRONMENT,
@@ -84,8 +103,8 @@ class Config:
                 'url': cls.get_ollama_url()
             },
             'model_provider': {
-                'provider': cls.MODEL_PROVIDER,
-                'chutes_configured': bool(cls.CHUTES_API_TOKEN),
+                'provider': provider,
+                'openrouter_configured': bool((cls.OPENROUTER_API_KEY or cls.CHUTES_API_TOKEN).strip()),
                 'show_reasoning': cls.SHOW_MODEL_REASONING
             },
             'rate_limiting': {

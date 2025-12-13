@@ -22,10 +22,15 @@ try:
     print()
     
     print(f"Model Provider: {Config.MODEL_PROVIDER}")
-    if Config.MODEL_PROVIDER == 'local':
+    provider = Config.MODEL_PROVIDER
+    if provider == 'chute':
+        provider = 'openrouter'
+
+    if provider == 'local':
         print(f"Ollama URL: {Config.get_ollama_url()}")
-    elif Config.MODEL_PROVIDER == 'chute':
-        print(f"Chutes API: {'✅ Configured' if Config.CHUTES_API_TOKEN else '❌ Not configured'}")
+    elif provider == 'openrouter':
+        configured = bool((Config.OPENROUTER_API_KEY or Config.CHUTES_API_TOKEN).strip())
+        print(f"OpenRouter API: {'✅ Configured' if configured else '❌ Not configured'}")
         print(f"Show Reasoning: {Config.SHOW_MODEL_REASONING}")
     print()
     
@@ -44,14 +49,14 @@ try:
     
     # Test model provider
     print("\n🤖 Model Provider Test")
-    if Config.MODEL_PROVIDER == 'chute':
+    if provider == 'openrouter':
         try:
-            from server.chutes_client import ChutesClient
-            client = ChutesClient()
+            from server.openrouter_client import OpenRouterClient
+            client = OpenRouterClient()
             health = client.check_health()
-            print(f"Chutes AI: {'✅ Healthy' if health else '❌ Unhealthy'}")
+            print(f"OpenRouter: {'✅ Healthy' if health else '❌ Unhealthy'}")
         except Exception as e:
-            print(f"Chutes AI: ❌ Error - {e}")
+            print(f"OpenRouter: ❌ Error - {e}")
     else:
         import requests
         try:
