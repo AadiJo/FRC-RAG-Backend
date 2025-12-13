@@ -20,6 +20,7 @@ from .image_embedder import ImageEmbedder
 from ..utils.query_cache import QueryCache, ChunkCache
 from ..utils.feedback_manager import FeedbackManager
 from ..server.openrouter_client import OpenRouterClient
+from ..server.chutes_client import ChutesClient
 from ..server.config import get_config
 from ..utils.citation_formatter import format_web_citation, format_youtube_citation
 
@@ -317,36 +318,70 @@ Instructions:
 
     def _init_model_client(self):
         """Initialize the appropriate model client based on configuration"""
-        provider = Config.MODEL_PROVIDER
-        if provider == 'chute':
-            provider = 'openrouter'
-
-        if provider == 'openrouter':
-            try:
-                self.openrouter_client = OpenRouterClient()
-                print(f"✅ OpenRouter client initialized for model provider: {provider}")
-            except Exception as e:
-                print(f"❌ Failed to initialize OpenRouter client: {e}")
-                self.openrouter_client = None
-        else:
+        # Always initialize Chutes client for server defaults (gpt-oss-20b)
+        try:
+            self.chutes_client = ChutesClient()
+            print(f"✅ Chutes client initialized for server defaults (gpt-oss-20b)")
+        except Exception as e:
+            print(f"⚠️ Failed to initialize Chutes client: {e}")
+            self.chutes_client = None
+        
+        # Always initialize OpenRouter client for custom user keys
+        try:
+            self.openrouter_client = OpenRouterClient()
+            print(f"✅ OpenRouter client initialized for custom user keys")
+        except Exception as e:
+            print(f"⚠️ Failed to initialize OpenRouter client: {e}")
             self.openrouter_client = None
-            print(f"✅ Using local Ollama for model provider: {provider}")
-
-    def _generate_response(self, prompt: str, show_reasoning: bool = None) -> str:
-        """Generate response using the configured model provider"""
+        
+        # Log the configured provider for reference
         provider = Config.MODEL_PROVIDER
         if provider == 'chute':
-            provider = 'openrouter'
+            provider = 'chutes'
+        if provider == 'local':
+            print(f"✅ Using local Ollama as fallback (provider: {provider})")
+        elif provider == 'openrouter':
+            print(f"ℹ️  MODEL_PROVIDER is set to 'openrouter', but server defaults use Chutes")
+        elif provider == 'chutes':
+            print(f"ℹ️  MODEL_PROVIDER is set to 'chutes' (server defaults)")
 
-        if provider == 'openrouter' and getattr(self, 'openrouter_client', None):
+    def _generate_response(self, prompt: str, show_reasoning: bool = None, custom_api_key: str = None) -> str:
+        """Generate response using the configured model provider"""
+        # If custom_api_key is provided, always use OpenRouter (users can only specify openrouter keys)
+        if custom_api_key and getattr(self, 'openrouter_client', None):
+            try:
+                return self.openrouter_client.chat_completion(
+                    prompt, 
+                    show_reasoning=show_reasoning,
+                    custom_api_key=custom_api_key
+                )
+            except Exception as e:
+                print(f"❌ OpenRouter request failed: {e}")
+                return "I encountered an issue generating the response. Please try again."
+        
+        # For server defaults (no custom_api_key), use Chutes with gpt-oss-20b
+        if getattr(self, 'chutes_client', None):
+            try:
+                return self.chutes_client.chat_completion(prompt, show_reasoning=show_reasoning)
+            except Exception as e:
+                print(f"❌ Chutes request failed: {e}")
+                # Fallback to OpenRouter if Chutes fails
+                if getattr(self, 'openrouter_client', None):
+                    try:
+                        return self.openrouter_client.chat_completion(prompt, show_reasoning=show_reasoning)
+                    except Exception as e2:
+                        print(f"❌ OpenRouter fallback failed: {e2}")
+                        return "I encountered an issue generating the response. Please try again."
+                return "I encountered an issue generating the response. Please try again."
+        elif getattr(self, 'openrouter_client', None):
+            # Fallback to OpenRouter if Chutes client not available
             try:
                 return self.openrouter_client.chat_completion(prompt, show_reasoning=show_reasoning)
             except Exception as e:
                 print(f"❌ OpenRouter request failed: {e}")
-                # Fallback to basic response
                 return "I encountered an issue generating the response. Please try again."
         else:
-            # Use Ollama
+            # Use Ollama as last resort
             try:
                 model = Ollama(model="gpt-oss:20b")
                 return model.invoke(prompt)
@@ -357,11 +392,50 @@ Instructions:
     def _generate_response_stream(self, prompt: str, show_reasoning: bool = None, 
                                     custom_api_key: str = None, custom_model: str = None, system_prompt: str = None):
         """Generate streaming response using the configured model provider"""
-        provider = Config.MODEL_PROVIDER
-        if provider == 'chute':
-            provider = 'openrouter'
-
-        if provider == 'openrouter' and getattr(self, 'openrouter_client', None):
+        # If custom_api_key is provided, always use OpenRouter (users can only specify openrouter keys)
+        if custom_api_key and getattr(self, 'openrouter_client', None):
+            try:
+                for chunk in self.openrouter_client.chat_completion_stream(
+                    prompt, 
+                    show_reasoning=show_reasoning,
+                    custom_api_key=custom_api_key,
+                    custom_model=custom_model,
+                    system_prompt=system_prompt
+                ):
+                    yield chunk
+            except Exception as e:
+                print(f"❌ OpenRouter streaming failed: {e}")
+                yield "I encountered an issue generating the response. Please try again."
+            return
+        
+        # For server defaults (no custom_api_key), use Chutes with gpt-oss-20b
+        if getattr(self, 'chutes_client', None):
+            try:
+                for chunk in self.chutes_client.chat_completion_stream(
+                    prompt,
+                    show_reasoning=show_reasoning,
+                    system_prompt=system_prompt
+                ):
+                    yield chunk
+            except Exception as e:
+                print(f"❌ Chutes streaming failed: {e}")
+                # Fallback to OpenRouter if Chutes fails
+                if getattr(self, 'openrouter_client', None):
+                    try:
+                        for chunk in self.openrouter_client.chat_completion_stream(
+                            prompt, 
+                            show_reasoning=show_reasoning,
+                            custom_model=custom_model,
+                            system_prompt=system_prompt
+                        ):
+                            yield chunk
+                    except Exception as e2:
+                        print(f"❌ OpenRouter fallback failed: {e2}")
+                        yield "I encountered an issue generating the response. Please try again."
+                else:
+                    yield "I encountered an issue generating the response. Please try again."
+        elif getattr(self, 'openrouter_client', None):
+            # Fallback to OpenRouter if Chutes client not available
             try:
                 for chunk in self.openrouter_client.chat_completion_stream(
                     prompt, 
@@ -375,7 +449,7 @@ Instructions:
                 print(f"❌ OpenRouter streaming failed: {e}")
                 yield "I encountered an issue generating the response. Please try again."
         else:
-            # Use Ollama streaming
+            # Use Ollama streaming as last resort
             try:
                 model = Ollama(model="gpt-oss:20b")
                 for chunk in model.stream(prompt):
@@ -1077,7 +1151,7 @@ Instructions:
             query: The user's query
             metadata: Query metadata from prepare_query_metadata
             show_reasoning: Whether to include reasoning content
-            custom_api_key: Optional custom Chutes API key
+            custom_api_key: Optional custom OpenRouter API key (users can only specify openrouter keys)
             custom_model: Optional custom model to use
             system_prompt: Optional system prompt override
         """

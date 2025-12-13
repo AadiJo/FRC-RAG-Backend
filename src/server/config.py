@@ -32,8 +32,9 @@ class Config:
     # Provider values:
     # - 'local' (Ollama)
     # - 'openrouter' (OpenRouter)
-    # Legacy: 'chute' is treated as OpenRouter for backward compatibility.
-    MODEL_PROVIDER = os.getenv('MODEL_PROVIDER', 'local')
+    # - 'chutes' (Chutes AI)
+    # Legacy: 'chute' is treated as 'chutes' for backward compatibility.
+    MODEL_PROVIDER = os.getenv('MODEL_PROVIDER', 'chutes')
 
     # Legacy (deprecated): retained for compatibility with older setups
     CHUTES_API_TOKEN = os.getenv('CHUTES_API_TOKEN', '')
@@ -41,8 +42,8 @@ class Config:
     # OpenRouter settings
     OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY', '')
     OPENROUTER_BASE_URL = os.getenv('OPENROUTER_BASE_URL', 'https://openrouter.ai/api/v1')
-    # Default to a reasonable OpenAI-compatible model (gpt-oss-20b) when using OpenRouter
-    OPENROUTER_DEFAULT_MODEL = os.getenv('OPENROUTER_DEFAULT_MODEL', 'openai/gpt-oss-20b:free')
+    # Default to gpt-oss-20b when using OpenRouter (for chutes compatibility)
+    OPENROUTER_DEFAULT_MODEL = os.getenv('OPENROUTER_DEFAULT_MODEL', 'openai/gpt-oss-20b')
     # Optional but recommended attribution headers
     OPENROUTER_HTTP_REFERER = os.getenv('OPENROUTER_HTTP_REFERER', '')
     OPENROUTER_APP_TITLE = os.getenv('OPENROUTER_APP_TITLE', 'FRC RAG')
@@ -87,7 +88,7 @@ class Config:
         """Convert config to dictionary (excluding sensitive data)"""
         provider = cls.MODEL_PROVIDER
         if provider == 'chute':
-            provider = 'openrouter'
+            provider = 'chutes'
         return {
             'server': {
                 'environment': cls.ENVIRONMENT,

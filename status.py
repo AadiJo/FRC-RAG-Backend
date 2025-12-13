@@ -24,10 +24,15 @@ try:
     print(f"Model Provider: {Config.MODEL_PROVIDER}")
     provider = Config.MODEL_PROVIDER
     if provider == 'chute':
-        provider = 'openrouter'
+        provider = 'chutes'
 
     if provider == 'local':
         print(f"Ollama URL: {Config.get_ollama_url()}")
+    elif provider == 'chutes':
+        configured = bool(Config.CHUTES_API_TOKEN.strip())
+        print(f"Chutes API: {'✅ Configured' if configured else '❌ Not configured'}")
+        print(f"Default Model: openai/gpt-oss-20b")
+        print(f"Show Reasoning: {Config.SHOW_MODEL_REASONING}")
     elif provider == 'openrouter':
         configured = bool((Config.OPENROUTER_API_KEY or Config.CHUTES_API_TOKEN).strip())
         print(f"OpenRouter API: {'✅ Configured' if configured else '❌ Not configured'}")
@@ -49,7 +54,15 @@ try:
     
     # Test model provider
     print("\n🤖 Model Provider Test")
-    if provider == 'openrouter':
+    if provider == 'chutes':
+        try:
+            from server.chutes_client import ChutesClient
+            client = ChutesClient()
+            health = client.check_health()
+            print(f"Chutes: {'✅ Healthy' if health else '❌ Unhealthy'}")
+        except Exception as e:
+            print(f"Chutes: ❌ Error - {e}")
+    elif provider == 'openrouter':
         try:
             from server.openrouter_client import OpenRouterClient
             client = OpenRouterClient()

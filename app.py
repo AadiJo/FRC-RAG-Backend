@@ -105,12 +105,15 @@ def health_check():
     """Comprehensive health check endpoint"""
     provider = Config.MODEL_PROVIDER
     if provider == 'chute':
-        provider = 'openrouter'
+        provider = 'chutes'
 
     ollama_healthy = ollama_proxy.check_health() if provider == 'local' else True
     openrouter_healthy = False
+    chutes_healthy = False
     if provider == 'openrouter' and query_processor and hasattr(query_processor, 'openrouter_client') and query_processor.openrouter_client:
         openrouter_healthy = query_processor.openrouter_client.check_health()
+    elif provider == 'chutes' and query_processor and hasattr(query_processor, 'chutes_client') and query_processor.chutes_client:
+        chutes_healthy = query_processor.chutes_client.check_health()
     
     stats = ollama_proxy.get_stats()
     tunnel_status = tunnel_manager.get_status()
@@ -124,7 +127,12 @@ def health_check():
             logger.warning(f"Could not get cache stats: {e}")
     
     # Determine overall status based on provider
-    model_healthy = openrouter_healthy if provider == 'openrouter' else ollama_healthy
+    if provider == 'openrouter':
+        model_healthy = openrouter_healthy
+    elif provider == 'chutes':
+        model_healthy = chutes_healthy
+    else:
+        model_healthy = ollama_healthy
         
     status = "healthy" if model_healthy and query_processor else "degraded"
     
@@ -134,6 +142,7 @@ def health_check():
         "components": {
             "ollama": ollama_healthy if provider == 'local' else None,
             "openrouter": openrouter_healthy if provider == 'openrouter' else None,
+            "chutes": chutes_healthy if provider == 'chutes' else None,
             "query_processor": query_processor is not None,
             "chroma_db": os.path.exists(Config.CHROMA_PATH),
             "images": os.path.exists(Config.IMAGES_PATH)
@@ -707,7 +716,7 @@ def api_get_openrouter_models():
     try:
         # Curated fallback list (works without hitting OpenRouter)
         fallback_models = [
-            {"id": "openai/gpt-oss-20b", "name": "OpenAI gpt-oss-20b (Recommended)", "free": False},
+            {"id": "tngtech/tng-r1t-chimera:free", "name": "TNG R1T Chimera (Recommended)", "free": True},
             {"id": "openai/gpt-4o-mini", "name": "GPT-4o mini", "free": False},
             {"id": "anthropic/claude-3.5-sonnet", "name": "Claude 3.5 Sonnet", "free": False},
             {"id": "google/gemini-1.5-flash", "name": "Gemini 1.5 Flash", "free": False},
@@ -717,7 +726,7 @@ def api_get_openrouter_models():
 
         api_key = _extract_openrouter_key_from_request() or (Config.OPENROUTER_API_KEY or '').strip() or (Config.CHUTES_API_TOKEN or '').strip()
         if not api_key:
-            return jsonify({"models": fallback_models, "default_model": Config.OPENROUTER_DEFAULT_MODEL})
+            return jsonify({"models": fallback_models, "default_model": "openai/gpt-oss-20b", "default_model_display": "OpenAI: gpt-oss-20b"})
 
         from src.server.openrouter_client import OpenRouterClient
         client = OpenRouterClient()
@@ -729,7 +738,8 @@ def api_get_openrouter_models():
 
         return jsonify({
             "models": models,
-            "default_model": Config.OPENROUTER_DEFAULT_MODEL,
+            "default_model": "openai/gpt-oss-20b",
+            "default_model_display": "OpenAI: gpt-oss-20b",
         })
 
     except Exception as e:
