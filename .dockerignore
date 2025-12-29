@@ -1,0 +1,41 @@
+# Ignore Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+
+# Ignore virtual environments
+.venv/
+venv/
+env/
+
+# Ignore IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Ignore test files
+tests/
+.pytest_cache/
+
+# Ignore data and database (these should be mounted as volumes)
+data/
+db/
+logs/
+backups/
+processed/
+
+# Ignore local env files
+.env
+.env.local
+.env*.local
+
+# Ignore git
+.git/
+.gitignore
+
+# Ignore docs (optional, keep if you want docs in image)
+docs/
+*.md
+!requirements.txt

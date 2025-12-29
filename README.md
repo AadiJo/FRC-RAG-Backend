@@ -16,108 +16,177 @@ This tool helps FRC teams build on existing knowledge instead of starting from s
 
 ## Features
 
-- **Query Processing**: Enhanced RAG system with FRC game piece context mapping
-- **Caching**: Semantic and exact-match caching for 30-90% faster responses
-- **Rate Limiting**: Configurable rate limits to prevent abuse (default: 60 requests/minute)
-- **Real-time Monitoring**: Performance monitoring and usage statistics with cache hit rates
-- **REST API**: Full API for query processing, feedback, and health monitoring
-
-## What makes FRC RAG different?
-
-Users can upload documents, CAD files, and forum threads in real time, keeping the knowledge base up to date with current season innovations. The system uses multi-season mechanism retrieval and game-piece context mapping to return solutions that are truly relevant to the current challenge. With caching, rate limiting, and real-time monitoring, the platform is designed to be production-ready and deployable, so teams can integrate it into their workflow immediately
+- **Document Ingestion**: Parse PDF binders with OCR support
+- **Image Processing**: Extract, deduplicate, and process images
+- **Multimodal Embeddings**: Text (bge-large-en-v1.5) and image (CLIP ViT-L/14) embeddings
+- **Vision Captioning**: Generate captions using BLIP-2 with context grounding
+- **Vector Search**: Qdrant-powered hybrid search with late fusion
+- **FastAPI Server**: Production-ready API with rate limiting and auth
 
 ## Quick Start
 
-### 1. Install Dependencies
+### 1. Setup Environment
 
 ```bash
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate  # Linux/Mac
+# or: venv\Scripts\activate  # Windows
+
+# Install dependencies
 pip install -r requirements.txt
 ```
 
 ### 2. Configure Environment
 
-```bash
-cp .env.example .env
-```
-
-Edit `.env` and set your OpenRouter API key:
-
-```env
-MODEL_PROVIDER=openrouter
-OPENROUTER_API_KEY=your-api-key-here
-```
-
-### 3. Run the Server
+Copy `.env.local` and adjust settings:
 
 ```bash
-./start.sh
-# Or: python app.py
+ENVIRONMENT=development
+SERVER_HOST=0.0.0.0
+SERVER_PORT=5000
+DB_PATH=db
+IMAGES_PATH=data/images
+LOG_LEVEL=INFO
 ```
 
-The API will be available at `http://localhost:5000`
+### 3. Ingest Documents
+
+Place PDF files in `data/` directory, then run:
+
+```bash
+python scripts/ingest.py data/
+
+# Options:
+# --skip-images    Skip image processing (faster)
+# --skip-captions  Skip caption generation
+# --no-gpu         Disable GPU acceleration
+# -v               Verbose output
+```
+
+### 4. Start Server
+
+```bash
+# Development
+python -m src.app
+
+# Or with uvicorn directly
+uvicorn src.app:app --host 0.0.0.0 --port 5000 --reload
+```
+
+### 5. Query the API
+
+```bash
+# Health check
+curl http://localhost:5000/health
+
+# Query
+curl -X POST http://localhost:5000/context \
+  -H "Content-Type: application/json" \
+  -d '{"query": "How does a swerve drive work?"}'
+```
 
 ## Project Structure
 
 ```
-├── app.py                 # Main server application
-├── requirements.txt       # Python dependencies
-├── start.sh               # Server startup script
-├── .env.example           # Environment configuration template
-├── src/                   # Source code
-│   ├── core/              # Core RAG components
-│   │   ├── query_processor.py    # Query processing logic
-│   │   ├── game_piece_mapper.py  # Game piece context mapping
-│   │   ├── filter_config.py      # Filter configuration
-│   │   └── image_embedder.py     # Image embedding utilities
-│   ├── server/            # Server components
-│   │   ├── config.py             # Configuration management
-│   │   ├── rate_limiter.py       # Rate limiting
-│   │   ├── ollama_proxy.py       # Ollama proxy
-│   │   ├── openrouter_client.py  # OpenRouter client
-│   │   └── tunnel.py             # Tunneling utilities
-│   └── utils/             # Utilities
-│       ├── database_setup.py     # Database initialization
-│       ├── query_cache.py        # Query caching
-│       └── feedback_manager.py   # Feedback handling
-├── data/                  # Data directory (PDFs, images)
-├── db/                    # ChromaDB database
-├── logs/                  # Log files
-├── scraper/               # Data scraping utilities
-└── scripts/               # Utility scripts
+backend/
+├── src/
+│   ├── app.py              # FastAPI application
+│   ├── database_setup.py   # Qdrant vector database
+│   ├── query_processor.py  # Query and retrieval logic
+│   ├── ingestion/          # Document processing
+│   │   ├── parser.py       # PDF parsing with OCR
+│   │   ├── image_processor.py  # Image extraction
+│   │   ├── chunker.py      # Text chunking
+│   │   ├── embedder.py     # Embedding generation
+│   │   └── captioner.py    # Image captioning
+│   └── utils/
+│       ├── config.py       # Configuration management
+│       ├── logger.py       # Structured logging
+│       └── metrics.py      # Metrics collection
+├── scripts/
+│   └── ingest.py           # Ingestion pipeline CLI
+├── tests/                  # Unit and integration tests
+├── data/                   # PDF files and images
+├── db/                     # Qdrant database
+└── logs/                   # Application logs
 ```
 
 ## API Endpoints
 
-### Query Endpoints
-- `POST /api/query` - Process RAG query
-- `POST /api/query/stream` - Stream RAG query response
-
-### Health & Monitoring
-- `GET /health` - Comprehensive health check
-- `GET /api/stats` - Server statistics
-
-
-### Utility Endpoints
-- `POST /api/feedback` - Submit user feedback
-- `GET /images/<path>` - Serve images
-- `POST /api/upload/pdf` - Upload a PDF file
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/health` | Health check |
+| POST | `/query` | Full search with all options |
+| POST | `/context` | LLM-optimized context retrieval |
+| POST | `/validate-citations` | Validate chunk IDs |
+| GET | `/chunk/{chunk_id}` | Get specific chunk |
+| GET | `/stats` | System statistics |
+| GET | `/images/{path}` | Static image hosting |
 
 ## Configuration
 
-Key environment variables (see `.env.example` for full list):
+Key environment variables:
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `MODEL_PROVIDER` | LLM provider (`openrouter` or `local`) | `local` |
-| `OPENROUTER_API_KEY` | OpenRouter API key | - |
-| `SERVER_PORT` | Port to listen on | `5000` |
-| `RATE_LIMIT_REQUESTS` | Requests per minute | `60` |
-| `CHROMA_PATH` | ChromaDB path | `db` |
-| `IMAGES_PATH` | Images directory | `data/images` |
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ENVIRONMENT` | development | Environment mode |
+| `SERVER_PORT` | 5000 | API port |
+| `DB_PATH` | db | Qdrant database path |
+| `IMAGES_PATH` | data/images | Image storage path |
+| `API_KEY_REQUIRED` | false | Enable API key auth |
+| `TUNNEL` | false | Enable ngrok tunnel |
+| `LOG_LEVEL` | INFO | Logging level |
 
-## Planned Additions
+## Running Tests
 
-* **Dynamic Source Integration**: Real-time document upload capability letting users to add team publications, Chief Delphi threads, and other relevant resources directly to the database during their current session
-* **Visual Search Results**: Multi-modal query responses that combine text solution descriptions with corresponding robot photos and CAD screenshots for complete technical understanding
-* **Mobile Application**: iOS and Android app providing full platform functionality
-* **Shareable Collaboration**: Link generation system enabling teams to share specific search results and findings through persistent URLs for quick information sharing
+```bash
+# Run all tests
+pytest
+
+# Run with coverage
+pytest --cov=src
+
+# Run specific test file
+pytest tests/test_api.py -v
+```
+
+## Architecture
+
+### Ingestion Pipeline (GPU Machine)
+
+1. **Parse**: Extract text and structure from PDFs
+2. **OCR**: Process scanned pages with Tesseract/PaddleOCR
+3. **Chunk**: Split into 400-600 token chunks
+4. **Extract**: Save and deduplicate images
+5. **Caption**: Generate image descriptions with BLIP-2
+6. **Embed**: Create text (BGE) and image (CLIP) embeddings
+7. **Export**: Save to Parquet for transfer
+
+### Serving (VPS/Cloud)
+
+1. **Ingest**: Load embeddings into Qdrant
+2. **Query**: Embed queries on CPU with sentence-transformers
+3. **Search**: Hybrid text + image vector search
+4. **Fuse**: Late fusion scoring (0.7 text + 0.3 image)
+5. **Format**: Return structured context for LLM
+
+### Frontend Integration
+
+The backend returns context only. The frontend:
+1. Calls `/context` endpoint
+2. Builds system prompt with context
+3. Calls LLM API (Groq, OpenAI, etc.)
+4. Displays response with citations
+
+See `docs/frontend_integration.md` for detailed examples.
+
+## Performance
+
+- **Ingestion**: ~1-2 min per PDF (with GPU)
+- **Query Latency**: <200ms (CPU embedding + search)
+- **Memory**: ~2GB for 10k chunks
+
+## License
+
+MIT

@@ -2,77 +2,41 @@
 __pycache__/
 *.py[cod]
 *$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
-
-# Virtual Environment
+.pytest_cache/
 .venv/
-env/
+venv/
 ENV/
+env/
+*.egg-info/
+.mypy_cache/
 
-# Environment Variables
+# Environment files
 .env
 .env.local
-.env.production
-.env.vps
-
-# Allow .env.example files
+.env.*
 !.env.example
-!**/.env.example
 
-# Database
+# Databases and storage
 db/
-test_db/
-*.sqlite3
-
-# Data
-data/
+data/*
 !data/.gitkeep
-
-# Logs
+processed/
+backups/
 logs/
 *.log
+certbot/
 
-# IDE
+# Generated files
+processed_binder.json
+*.pdf
+
+# Operating System files
+.DS_Store
+Thumbs.db
+*.Identifier
+
+# IDEs
 .vscode/
 .idea/
 *.swp
 *.swo
-*~
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Temporary files
-tmp/
-temp/
-
-# Backup files
-*_old.*
-*_backup.*
-
-# Tunnel configs
-ngrok.yml
-
-# Scraper downloads
-scraper/downloads/
-
-scraper/

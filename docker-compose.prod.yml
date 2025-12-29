@@ -1,0 +1,88 @@
+# Production Docker Compose for FRC RAG Backend
+# Usage: docker compose -f docker-compose.prod.yml up -d
+
+services:
+  # --- Qdrant Vector Database ---
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: frc-rag-qdrant
+    restart: unless-stopped
+    volumes:
+      - qdrant_storage:/qdrant/storage
+      - qdrant_snapshots:/qdrant/snapshots
+    environment:
+      - QDRANT__LOG_LEVEL=INFO
+    # Qdrant is only accessible from within the Docker network
+    expose:
+      - "6333"
+      - "6334"
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+
+  # --- FastAPI Backend ---
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: frc-rag-backend
+    restart: unless-stopped
+    depends_on:
+      - qdrant
+    volumes:
+      # Mount persistent data directories
+      - ./db:/app/db
+      - ./data:/app/data:ro # Read-only for serving images
+      - ./logs:/app/logs
+    environment:
+      - ENVIRONMENT=production
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=5000
+      - DB_PATH=/app/db
+      - IMAGES_PATH=/app/data/images
+      - LOG_LEVEL=INFO
+      - API_KEY_REQUIRED=true
+      - VALID_API_KEYS=${RAG_API_KEY}
+      # Qdrant connection - uses Docker network hostname
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+    expose:
+      - "5000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # --- Nginx Reverse Proxy ---
+  nginx:
+    image: nginx:alpine
+    container_name: frc-rag-nginx
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./certbot/www:/var/www/certbot:ro
+      - ./certbot/conf:/etc/letsencrypt:ro
+    command: '/bin/sh -c ''while :; do sleep 6h & wait $${!}; nginx -s reload; done & nginx -g "daemon off;"'''
+
+  # --- Certbot for SSL ---
+  certbot:
+    image: certbot/certbot
+    container_name: frc-rag-certbot
+    restart: unless-stopped
+    volumes:
+      - ./certbot/www:/var/www/certbot
+      - ./certbot/conf:/etc/letsencrypt
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+
+volumes:
+  qdrant_storage:
+  qdrant_snapshots:

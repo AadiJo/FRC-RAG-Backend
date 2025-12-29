@@ -1,0 +1,18 @@
+# Data Directory
+
+This directory contains:
+- PDF documents for RAG processing
+- Extracted images from documents  
+- Processed image contexts
+
+## Structure
+```
+data/
+├── images/           # Extracted images organized by document
+│   ├── doc1-2025/   
+│   ├── doc2-2025/   
+│   └── ...
+└── *.pdf            # Source PDF documents
+```
+
+The database setup script will populate this directory during initialization.
