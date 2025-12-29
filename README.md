@@ -186,7 +186,3 @@ See `docs/frontend_integration.md` for detailed examples.
 - **Ingestion**: ~1-2 min per PDF (with GPU)
 - **Query Latency**: <200ms (CPU embedding + search)
 - **Memory**: ~2GB for 10k chunks
-
-## License
-
-MIT
