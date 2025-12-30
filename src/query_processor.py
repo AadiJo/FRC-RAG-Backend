@@ -23,6 +23,7 @@ from .ingestion.embedder import TextEmbedder, ImageEmbedder
 from .utils.config import settings
 from .utils.logger import get_logger
 from .utils.metrics import metrics
+import torch
 
 logger = get_logger(__name__)
 
@@ -567,8 +568,14 @@ class QueryProcessor:
                      return []
                 
                 # Load model
+                # Respect global config: allow forcing CPU-only mode via settings.cpu_only
                 logger.info("Loading ColPali for query...")
-                self.colpali = ColPaliIngester(device="cuda") # Assume CUDA for serving if available
+                if settings.cpu_only:
+                    chosen_device = "cpu"
+                else:
+                    chosen_device = "cuda" if torch.cuda.is_available() else "cpu"
+                logger.info(f"ColPali selected device: {chosen_device}")
+                self.colpali = ColPaliIngester(device=chosen_device)
                 self.colpali.load_model()
             except Exception as e:
                 logger.error(f"Failed to init ColPali: {e}")

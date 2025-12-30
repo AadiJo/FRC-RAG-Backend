@@ -96,6 +96,10 @@ class Settings(BaseSettings):
         default=0.3, description="Weight for image similarity in fusion"
     )
 
+    # Runtime device selection
+    cpu_only: bool = Field(
+        default=False, description="Force CPU-only mode (ignore GPUs)"
+    )
     # Rate limiting
     rate_limit_requests: int = Field(
         default=100, description="Max requests per minute"
