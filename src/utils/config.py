@@ -108,6 +108,36 @@ class Settings(BaseSettings):
         default=60, description="Rate limit window in seconds"
     )
 
+    # Qdrant configuration (for remote/standalone mode)
+    qdrant_host: Optional[str] = Field(
+        default=None, description="Qdrant server host (None = local disk mode)"
+    )
+    qdrant_port: int = Field(
+        default=6333, description="Qdrant server port"
+    )
+
+    # TEI (Text Embeddings Inference) configuration
+    tei_url: Optional[str] = Field(
+        default=None, description="TEI server URL (None = use local embedder)"
+    )
+    tei_timeout: float = Field(
+        default=30.0, description="TEI request timeout in seconds"
+    )
+
+    # Concurrency limits (backpressure)
+    max_concurrent_embeddings: int = Field(
+        default=10, description="Max concurrent embedding requests"
+    )
+    max_concurrent_qdrant: int = Field(
+        default=20, description="Max concurrent Qdrant queries"
+    )
+    max_concurrent_bm25: int = Field(
+        default=4, description="Max concurrent BM25 searches"
+    )
+    bm25_thread_workers: int = Field(
+        default=2, description="Thread pool size for BM25"
+    )
+
     @field_validator("valid_api_keys", mode="before")
     @classmethod
     def parse_api_keys(cls, v: str) -> str:

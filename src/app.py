@@ -9,6 +9,7 @@ Provides:
 - Rate limiting
 - CORS configuration
 - Ngrok tunnel for development
+- Async operations for non-blocking API handlers
 """
 
 import time
@@ -28,7 +29,8 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
 from .database_setup import VectorDatabase, get_database
-from .query_processor import QueryProcessor, get_query_processor
+from .query_processor import QueryProcessor, get_query_processor, shutdown_bm25_executor
+from .tei_client import shutdown_tei_client
 from .utils.config import settings
 from .utils.logger import get_logger, setup_logging
 from .utils.metrics import metrics
@@ -312,6 +314,25 @@ async def lifespan(app: FastAPI):
     
     stop_tunnel()
     
+    # Shutdown TEI client
+    try:
+        await shutdown_tei_client()
+    except Exception as e:
+        logger.warning(f"Failed to shutdown TEI client: {e}")
+    
+    # Close database connections
+    try:
+        db = get_database()
+        await db.async_close()
+    except Exception as e:
+        logger.warning(f"Failed to close database: {e}")
+    
+    # Shutdown BM25 thread pool
+    try:
+        shutdown_bm25_executor()
+    except Exception as e:
+        logger.warning(f"Failed to shutdown BM25 executor: {e}")
+    
     # Export metrics
     try:
         metrics.export_metrics(Path("logs/metrics.json"))
@@ -412,6 +433,7 @@ async def query(
     
     Returns relevant chunks and images based on the query.
     Supports filtering by team, year, subsystem, and binder.
+    Uses async methods for non-blocking operation.
     """
     # Log the exact request payload
     logger.info(
@@ -431,7 +453,8 @@ async def query(
         except Exception:
             classification = None
 
-        result = processor.search(
+        # Use async search for non-blocking operation
+        result = await processor.async_search(
             query=body.query,
             limit=body.limit,
             offset=body.offset,
@@ -543,6 +566,7 @@ async def get_context(
     
     Returns a formatted string with citations that can be used
     directly in an LLM prompt.
+    Uses async methods for non-blocking operation.
     """
     # Log the exact request payload
     logger.info(
@@ -553,7 +577,8 @@ async def get_context(
     print(f"\n[REQUEST] {request.url.path} | Payload: {body.model_dump()}")
 
     try:
-        result = processor.get_context_for_llm(
+        # Use async context retrieval for non-blocking operation
+        result = await processor.async_get_context_for_llm(
             query=body.query,
             max_chunks=body.max_chunks,
             max_context_length=body.max_context_length,
@@ -687,10 +712,12 @@ async def upsert_user_documents(
     """
     Upsert user documents to the vector store.
     
-    Chunks and embeds each document using the existing text embedder,
+    Chunks and embeds each document using async TEI client,
     then stores in the user_docs collection with user_id filtering.
+    Uses batch embedding for efficiency.
     """
     from .ingestion.text_chunker import TextChunker
+    from .tei_client import get_tei_client
     
     logger.info(
         "User document upsert request",
@@ -707,6 +734,9 @@ async def upsert_user_documents(
     
     upserted = []
     failed = []
+    
+    # Get TEI client for async embedding
+    tei_client = get_tei_client()
     
     for doc in body.documents:
         try:
@@ -728,16 +758,9 @@ async def upsert_user_documents(
                 ))
                 continue
             
-            # Generate embeddings for all chunks
+            # Generate embeddings for all chunks using async TEI (batch)
             chunk_texts = [c.text for c in chunks]
-            embeddings = []
-            
-            # Get embedder from processor
-            embedder = processor._get_text_embedder()
-            
-            for text in chunk_texts:
-                embedding = embedder.embed_text(text)
-                embeddings.append(embedding)
+            embeddings = await tei_client.embed_batch(chunk_texts)
             
             # Prepare chunks for database
             db_chunks = []

@@ -7,12 +7,16 @@ Handles:
 - Late fusion scoring
 - Result formatting with pagination
 - Confidence filtering
+- Async operations for non-blocking API handlers
 """
 
+import asyncio
 import re
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 from rank_bm25 import BM25Okapi
@@ -20,12 +24,36 @@ from rank_bm25 import BM25Okapi
 from src.ingestion.colpali import ColPaliIngester
 from .database_setup import VectorDatabase, get_database
 from .ingestion.embedder import TextEmbedder, ImageEmbedder
+from .tei_client import AsyncTEIClient, get_tei_client
 from .utils.config import settings
 from .utils.logger import get_logger
 from .utils.metrics import metrics
 import torch
 
 logger = get_logger(__name__)
+
+# Thread pool for CPU-bound BM25 operations
+_bm25_executor: Optional[ThreadPoolExecutor] = None
+
+
+def get_bm25_executor() -> ThreadPoolExecutor:
+    """Get or create thread pool for BM25 operations."""
+    global _bm25_executor
+    if _bm25_executor is None:
+        _bm25_executor = ThreadPoolExecutor(
+            max_workers=settings.bm25_thread_workers,
+            thread_name_prefix="bm25_worker"
+        )
+    return _bm25_executor
+
+
+def shutdown_bm25_executor() -> None:
+    """Shutdown BM25 thread pool for clean exit."""
+    global _bm25_executor
+    if _bm25_executor is not None:
+        _bm25_executor.shutdown(wait=True)
+        _bm25_executor = None
+        logger.info("BM25 executor shutdown complete")
 
 
 @dataclass
@@ -170,6 +198,24 @@ class QueryProcessor:
         # We assume it's enabled if the collection exists, but we won't load the model until needed
         self.colpali: Optional[ColPaliIngester] = None
         self.visual_retrieval_enabled = False # Will check on first query
+        
+        # Async TEI client (lazy initialized)
+        self._tei_client: Optional[AsyncTEIClient] = None
+        
+        # Semaphore for BM25 backpressure
+        self._bm25_semaphore: Optional[asyncio.Semaphore] = None
+
+    def _get_tei_client(self) -> AsyncTEIClient:
+        """Get or create TEI client."""
+        if self._tei_client is None:
+            self._tei_client = get_tei_client()
+        return self._tei_client
+
+    def _get_bm25_semaphore(self) -> asyncio.Semaphore:
+        """Get or create BM25 semaphore for backpressure."""
+        if self._bm25_semaphore is None:
+            self._bm25_semaphore = asyncio.Semaphore(settings.max_concurrent_bm25)
+        return self._bm25_semaphore
 
     def _load_image_map(self):
         """Load map of image_id -> relative_url for all valid images on disk."""
@@ -827,6 +873,455 @@ class QueryProcessor:
             latency_ms=latency_ms,
             filters_applied=filters,
         )
+
+    # =========================================================================
+    # Async Search Methods (Non-blocking for FastAPI)
+    # =========================================================================
+
+    async def async_embed_query(self, query: str) -> List[float]:
+        """
+        Embed query text using async TEI client.
+        
+        Falls back to sync embedder if TEI unavailable.
+        """
+        tei = self._get_tei_client()
+        return await tei.embed_single(query)
+
+    async def async_search_bm25(self, query: str, limit: int) -> List[SearchResult]:
+        """
+        Async BM25 search using thread pool executor.
+        
+        BM25 is CPU-bound and GIL-locked, so we run it in a thread pool
+        with semaphore backpressure.
+        """
+        if not self.bm25:
+            return []
+        
+        semaphore = self._get_bm25_semaphore()
+        
+        async with semaphore:
+            loop = asyncio.get_event_loop()
+            executor = get_bm25_executor()
+            
+            # Run BM25 scoring in thread pool
+            results = await loop.run_in_executor(
+                executor,
+                partial(self._search_bm25_sync, query, limit)
+            )
+            return results
+
+    def _search_bm25_sync(self, query: str, limit: int) -> List[SearchResult]:
+        """Synchronous BM25 search (called from executor)."""
+        return self._search_bm25(query, limit)
+
+    async def async_search_text_collection(
+        self,
+        query_vector: List[float],
+        limit: int,
+        filters: Optional[Dict[str, Any]] = None,
+        score_threshold: Optional[float] = None,
+    ) -> List[SearchResult]:
+        """Async text collection search using async Qdrant client."""
+        results = await self.db.async_search_text(
+            query_vector=query_vector,
+            limit=limit,
+            filters=filters,
+            score_threshold=score_threshold,
+        )
+        
+        search_results = []
+        seen_ids = set()
+        
+        for result in results:
+            chunk_id = result.get("id", "")
+            if not chunk_id or chunk_id in seen_ids:
+                continue
+            seen_ids.add(chunk_id)
+            
+            chunk_data = result.get("metadata", result) if "text" not in result else result
+            
+            search_results.append(SearchResult(
+                chunk_id=chunk_id,
+                text=chunk_data.get("text", ""),
+                score=result.get("score", 0.0),
+                page_number=chunk_data.get("page_number", 0),
+                team=chunk_data.get("team", ""),
+                year=chunk_data.get("year", ""),
+                binder=chunk_data.get("binder", ""),
+                subsystem=chunk_data.get("subsystem"),
+                headers=chunk_data.get("headers", []),
+                image_ids=chunk_data.get("image_ids", []),
+                source="text",
+            ))
+        
+        return search_results
+
+    async def async_search_image_collection(
+        self,
+        query_vector: List[float],
+        limit: int,
+        filters: Optional[Dict[str, Any]] = None,
+        score_threshold: Optional[float] = None,
+    ) -> List[ImageResult]:
+        """Async image collection search using async Qdrant client."""
+        results = await self.db.async_search_images(
+            query_vector=query_vector,
+            limit=limit,
+            filters=filters,
+            score_threshold=score_threshold,
+        )
+        
+        image_results = []
+        seen_ids = set()
+        
+        for result in results:
+            image_id = result.get("id", "")
+            if not image_id or image_id in seen_ids:
+                continue
+            seen_ids.add(image_id)
+            
+            img_data = result.get("metadata", result) if "caption" not in result else result
+            
+            url = img_data.get("url") or self._get_valid_image_url(image_id)
+            if not url:
+                continue
+            
+            caption = img_data.get("final_caption") or img_data.get("caption")
+            prompt_text = "Describe this engineering image in detail. Focus on visible components, labels, and spatial relationships."
+            if caption and caption.strip() == prompt_text:
+                caption = None
+            
+            image_results.append(ImageResult(
+                image_id=image_id,
+                score=result.get("score", 0.0),
+                caption=caption or self._captions_cache.get(image_id),
+                url=url,
+                page=img_data.get("page", 0),
+                team=str(img_data.get("team", "")),
+                year=str(img_data.get("year", "")),
+            ))
+        
+        return image_results
+
+    async def async_search_user_docs(
+        self,
+        query_vector: List[float],
+        user_id: str,
+        limit: int = 50,
+    ) -> List[SearchResult]:
+        """Async user documents search."""
+        try:
+            results = await self.db.async_search_user_docs(
+                query_vector=query_vector,
+                user_id=user_id,
+                limit=limit,
+            )
+            
+            search_results = []
+            for result in results:
+                search_results.append(SearchResult(
+                    chunk_id=result.get("id", ""),
+                    text=result.get("text", ""),
+                    score=result.get("score", 0.0),
+                    page_number=result.get("chunk_index", 0),
+                    team="",
+                    year="",
+                    binder=result.get("title", ""),
+                    subsystem=None,
+                    headers=[],
+                    image_ids=[],
+                    source="user_doc",
+                ))
+            
+            return search_results
+            
+        except Exception as e:
+            logger.error(f"Async user doc search failed: {e}")
+            return []
+
+    async def async_search(
+        self,
+        query: str,
+        limit: int = None,
+        team: Optional[str] = None,
+        year: Optional[str] = None,
+        subsystem: Optional[str] = None,
+        binder: Optional[str] = None,
+        include_images: bool = True,
+        min_score: float = 0.0,
+        offset: int = 0,
+    ) -> QueryResponse:
+        """
+        Perform async hybrid search (non-blocking).
+        
+        This is the main async entry point that uses:
+        - TEI for embeddings (async HTTP)
+        - Async Qdrant client for vector search
+        - Thread pool for BM25 (CPU-bound)
+        """
+        query_id = str(uuid.uuid4())[:8]
+        limit = limit or self.top_k
+        start_time = time.perf_counter()
+        
+        logger.info(
+            "Processing async query",
+            query_id=query_id,
+            query=query[:100],
+            limit=limit,
+        )
+        
+        # Normalize query
+        normalized_query = self._normalize_query(query)
+
+        # Build filters
+        filters = {}
+        if team:
+            filters["team"] = team
+        if year:
+            filters["year"] = year
+        if subsystem:
+            filters["subsystem"] = subsystem
+        if binder:
+            filters["binder"] = binder
+        
+        # Embed query (async via TEI)
+        query_vector = await self.async_embed_query(normalized_query)
+        
+        # Run searches in parallel
+        search_tasks = [
+            self.async_search_text_collection(
+                query_vector=query_vector,
+                limit=limit + offset + 10,
+                filters=filters if filters else None,
+                score_threshold=min_score if min_score > 0 else None,
+            ),
+            self.async_search_bm25(normalized_query, limit + offset + 10),
+        ]
+        
+        # Optionally add image search
+        if include_images:
+            # For now, use CLIP embedder synchronously (can be made async later)
+            try:
+                clip_embedder = self._get_image_embedder()
+                image_query_vector = clip_embedder.embed_text(normalized_query)
+                search_tasks.append(
+                    self.async_search_image_collection(
+                        query_vector=image_query_vector,
+                        limit=20,
+                        filters=filters if filters else None,
+                        score_threshold=0.2,
+                    )
+                )
+            except Exception as e:
+                logger.error(f"Image search setup failed: {e}")
+        
+        # Execute all searches in parallel
+        results = await asyncio.gather(*search_tasks, return_exceptions=True)
+        
+        # Unpack results
+        text_results = results[0] if not isinstance(results[0], Exception) else []
+        bm25_results = results[1] if not isinstance(results[1], Exception) else []
+        image_results = results[2] if len(results) > 2 and not isinstance(results[2], Exception) else []
+        
+        if isinstance(results[0], Exception):
+            logger.error(f"Text search failed: {results[0]}")
+        if isinstance(results[1], Exception):
+            logger.error(f"BM25 search failed: {results[1]}")
+        
+        # Visual search (ColPali) - run sync for now as it's rarely used
+        visual_results = []
+        if include_images:
+            visual_results = self._visual_search_colpali(normalized_query, limit=5)
+
+        # Fuse results (reuse sync fusion logic)
+        text_results, image_results = self._fuse_results(text_results, bm25_results, image_results)
+        
+        # Collect images from text chunks
+        seen_image_ids = {img.image_id for img in image_results}
+        chunk_images = []
+        
+        for chunk in text_results:
+            for image_id in chunk.image_ids:
+                if image_id and image_id not in seen_image_ids:
+                    seen_image_ids.add(image_id)
+                    url = self._get_valid_image_url(image_id)
+                    if url:
+                        prompt_text = "Describe this engineering image in detail. Focus on visible components, labels, and spatial relationships."
+                        caption = self._captions_cache.get(image_id)
+                        if caption and caption.strip() == prompt_text:
+                            caption = None
+                        
+                        chunk_images.append(ImageResult(
+                            image_id=image_id,
+                            score=chunk.score * 0.85,
+                            page=chunk.page_number,
+                            team=chunk.team,
+                            year=chunk.year,
+                            url=url,
+                            caption=caption,
+                        ))
+        
+        image_results.extend(chunk_images)
+        
+        # Deduplicate images
+        image_dict = {}
+        for img in image_results:
+            if img.image_id not in image_dict or img.score > image_dict[img.image_id].score:
+                image_dict[img.image_id] = img
+        image_results = sorted(image_dict.values(), key=lambda x: x.score, reverse=True)
+        
+        # Filter low confidence
+        text_results = self._filter_low_confidence(text_results, min_score=0.05)
+        
+        # Apply pagination
+        total_chunks = len(text_results)
+        text_results = text_results[offset:offset + limit]
+        
+        # Calculate latency
+        latency_ms = (time.perf_counter() - start_time) * 1000
+        
+        metrics.record_query_result(
+            query_id=query_id,
+            chunks_retrieved=len(text_results),
+            images_retrieved=len(image_results),
+            latency_ms=latency_ms,
+        )
+        
+        logger.info(
+            "Async query completed",
+            query_id=query_id,
+            chunks=len(text_results),
+            images=len(image_results),
+            latency_ms=round(latency_ms, 2),
+        )
+        
+        return QueryResponse(
+            query_id=query_id,
+            query=query,
+            chunks=text_results,
+            images=image_results[:20],
+            total_chunks=total_chunks,
+            total_images=len(image_results),
+            visual_pages=visual_results,
+            latency_ms=latency_ms,
+            filters_applied=filters,
+        )
+
+    async def async_get_context_for_llm(
+        self,
+        query: str,
+        max_chunks: int = 5,
+        max_context_length: int = 4000,
+        user_id: Optional[str] = None,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """
+        Async version of get_context_for_llm.
+        """
+        # Get FRC corpus results
+        response = await self.async_search(query, limit=max_chunks * 2, **kwargs)
+        
+        # Get user doc results if user_id provided
+        user_doc_results = []
+        if user_id:
+            query_vector = await self.async_embed_query(query)
+            user_doc_results = await self.async_search_user_docs(
+                query_vector=query_vector,
+                user_id=user_id,
+                limit=max_chunks,
+            )
+            logger.info(
+                "User documents searched (async)",
+                user_id=user_id,
+                num_results=len(user_doc_results),
+            )
+        
+        # Fuse FRC + user docs (reuse sync logic)
+        all_chunks = self._fuse_with_user_docs(
+            frc_results=response.chunks,
+            user_doc_results=user_doc_results,
+        )
+        
+        # Take top max_chunks
+        all_chunks = all_chunks[:max_chunks]
+        
+        # Format chunks for LLM (reuse sync formatting logic)
+        context_parts = []
+        citations = []
+        current_length = 0
+        
+        for i, chunk in enumerate(all_chunks):
+            chunk_text = chunk.text
+            chunk_length = len(chunk_text)
+            
+            if current_length + chunk_length > max_context_length:
+                remaining = max_context_length - current_length
+                if remaining > 100:
+                    chunk_text = chunk_text[:remaining] + "..."
+                else:
+                    break
+            
+            image_placeholders = []
+            unique_image_ids = sorted(list(set(chunk.image_ids)))
+            for img_id in unique_image_ids:
+                image_placeholders.append(f"[img:{img_id}]")
+            
+            if image_placeholders:
+                chunk_text = chunk_text + "\n" + " ".join(image_placeholders)
+            
+            citation_id = f"[{i+1}]"
+            context_parts.append(f"{citation_id} {chunk_text}")
+            
+            citation = {
+                "id": citation_id,
+                "chunk_id": chunk.chunk_id,
+                "page": chunk.page_number,
+                "team": chunk.team,
+                "year": chunk.year,
+                "binder": chunk.binder,
+                "source_type": chunk.source,
+            }
+            
+            if chunk.source == "user_doc":
+                citation["title"] = chunk.binder
+                citation["doc_id"] = "_".join(chunk.chunk_id.split("_")[:-2]) if "_chunk_" in chunk.chunk_id else chunk.chunk_id
+            
+            citations.append(citation)
+            current_length += len(chunk_text) + len(citation_id) + 2
+        
+        context = "\n\n".join(context_parts)
+        
+        # Build image_map
+        image_map = {}
+        for chunk in all_chunks:
+            for img_id in chunk.image_ids:
+                if img_id in image_map:
+                    continue
+                
+                url = self._get_valid_image_url(img_id)
+                if not url:
+                    continue
+                
+                prompt_text = "Describe this engineering image in detail. Focus on visible components, labels, and spatial relationships."
+                caption = self._captions_cache.get(img_id)
+                if caption and caption.strip() == prompt_text:
+                    caption = None
+                
+                image_map[f"[img:{img_id}]"] = {
+                    "image_id": img_id,
+                    "url": url,
+                    "caption": caption,
+                }
+        
+        return {
+            "context": context,
+            "citations": citations,
+            "images": [img.to_dict() for img in response.images],
+            "image_map": image_map,
+            "query_id": response.query_id,
+            "total_chunks": len(all_chunks),
+            "user_id": user_id,
+        }
 
     def _search_user_docs(
         self,

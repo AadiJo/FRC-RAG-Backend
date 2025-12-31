@@ -7,17 +7,20 @@ Handles:
 - Metadata indexing and filtering
 - Bulk ingestion from Parquet/JSONL
 - Backup and restore
+- Async operations for non-blocking queries
 """
 
+import asyncio
 import json
 import shutil
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
-from qdrant_client import QdrantClient
+from qdrant_client import QdrantClient, AsyncQdrantClient
 from qdrant_client.http import models as rest
 from qdrant_client.http.models import (
     Distance,
@@ -62,31 +65,43 @@ class VectorDatabase:
     Qdrant vector database manager.
     
     Features:
-    - Disk-backed storage
+    - Disk-backed storage or remote server
     - Separate collections for text and images
     - Metadata filtering
     - Bulk ingestion
+    - Async operations for non-blocking queries
     """
 
     def __init__(
         self,
         path: Optional[Path] = None,
         host: Optional[str] = None,
-        port: int = 6333,
+        port: Optional[int] = None,
     ):
         """
         Initialize vector database.
         
         Args:
             path: Path for local disk storage (default: from settings)
-            host: Qdrant server host (for remote mode)
-            port: Qdrant server port
+            host: Qdrant server host (for remote mode, default: from settings)
+            port: Qdrant server port (default: from settings)
         """
         self.path = Path(path or settings.db_path)
-        self.host = host
-        self.port = port
+        # Use settings for remote mode if not explicitly provided
+        self.host = host if host is not None else settings.qdrant_host
+        self.port = port if port is not None else settings.qdrant_port
         
         self._client: Optional[QdrantClient] = None
+        self._async_client: Optional[AsyncQdrantClient] = None
+        
+        # Semaphore for async query backpressure
+        self._qdrant_semaphore: Optional[asyncio.Semaphore] = None
+
+    def _get_qdrant_semaphore(self) -> asyncio.Semaphore:
+        """Get or create semaphore for Qdrant query backpressure."""
+        if self._qdrant_semaphore is None:
+            self._qdrant_semaphore = asyncio.Semaphore(settings.max_concurrent_qdrant)
+        return self._qdrant_semaphore
 
     def _get_client(self) -> QdrantClient:
         """Get or create Qdrant client."""
@@ -109,6 +124,41 @@ class VectorDatabase:
                 self._client = QdrantClient(path=str(self.path))
         
         return self._client
+
+    async def _get_async_client(self) -> AsyncQdrantClient:
+        """Get or create async Qdrant client for non-blocking operations.
+        
+        NOTE: Only works with remote Qdrant. For local mode, use _run_sync_in_executor.
+        """
+        if not self.host:
+            raise RuntimeError(
+                "AsyncQdrantClient requires remote Qdrant server. "
+                "Local embedded Qdrant doesn't support concurrent clients. "
+                "Use QDRANT_HOST environment variable to connect to remote Qdrant."
+            )
+        
+        if self._async_client is None:
+            logger.info(
+                "Creating async Qdrant client",
+                host=self.host,
+                port=self.port,
+            )
+            self._async_client = AsyncQdrantClient(host=self.host, port=self.port)
+        
+        return self._async_client
+
+    async def _run_sync_in_executor(self, func, *args, **kwargs):
+        """Run a sync function in thread pool executor (for local Qdrant mode)."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,  # Use default executor
+            lambda: func(*args, **kwargs)
+        )
+
+    @property
+    def is_remote(self) -> bool:
+        """Check if connected to remote Qdrant server."""
+        return self.host is not None
 
     @property
     def client(self) -> QdrantClient:
@@ -647,6 +697,195 @@ class VectorDatabase:
             for result in results.points
         ]
 
+    # =========================================================================
+    # Async Search Methods (Non-blocking for FastAPI)
+    # =========================================================================
+
+    async def async_search_text(
+        self,
+        query_vector: List[float],
+        limit: int = 10,
+        filters: Optional[Dict[str, Any]] = None,
+        score_threshold: Optional[float] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Async search text chunks collection (non-blocking).
+        
+        Uses async client for remote Qdrant, or run_in_executor for local mode.
+        """
+        semaphore = self._get_qdrant_semaphore()
+        async with semaphore:
+            if self.is_remote:
+                # True async for remote Qdrant
+                client = await self._get_async_client()
+                qdrant_filter = self._build_filter(filters)
+                results = await client.query_points(
+                    collection_name=TEXT_COLLECTION,
+                    query=query_vector,
+                    limit=limit,
+                    query_filter=qdrant_filter,
+                    score_threshold=score_threshold,
+                )
+                return [
+                    {
+                        "id": result.payload.get("id", str(result.id)),
+                        "score": result.score,
+                        **result.payload,
+                    }
+                    for result in results.points
+                ]
+            else:
+                # Run sync method in executor for local Qdrant
+                return await self._run_sync_in_executor(
+                    self.search_text,
+                    query_vector=query_vector,
+                    limit=limit,
+                    filters=filters,
+                    score_threshold=score_threshold,
+                )
+
+    async def async_search_images(
+        self,
+        query_vector: List[float],
+        limit: int = 10,
+        filters: Optional[Dict[str, Any]] = None,
+        score_threshold: Optional[float] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Async search image chunks collection (non-blocking).
+        """
+        semaphore = self._get_qdrant_semaphore()
+        async with semaphore:
+            if self.is_remote:
+                client = await self._get_async_client()
+                qdrant_filter = self._build_filter(filters)
+                results = await client.query_points(
+                    collection_name=IMAGE_COLLECTION,
+                    query=query_vector,
+                    limit=limit,
+                    query_filter=qdrant_filter,
+                    score_threshold=score_threshold,
+                )
+                return [
+                    {
+                        "id": result.payload.get("id", str(result.id)),
+                        "score": result.score,
+                        **result.payload,
+                    }
+                    for result in results.points
+                ]
+            else:
+                return await self._run_sync_in_executor(
+                    self.search_images,
+                    query_vector=query_vector,
+                    limit=limit,
+                    filters=filters,
+                    score_threshold=score_threshold,
+                )
+
+    async def async_search_colpali(
+        self,
+        query_multivector: List[List[float]],
+        limit: int = 10,
+        filters: Optional[Dict[str, Any]] = None,
+        score_threshold: Optional[float] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Async search ColPali collection using MaxSim.
+        """
+        semaphore = self._get_qdrant_semaphore()
+        async with semaphore:
+            if self.is_remote:
+                client = await self._get_async_client()
+                qdrant_filter = self._build_filter(filters)
+                results = await client.query_points(
+                    collection_name=COLPALI_COLLECTION,
+                    query=query_multivector,
+                    using="colpali",
+                    limit=limit,
+                    query_filter=qdrant_filter,
+                    score_threshold=score_threshold,
+                )
+                return [
+                    {
+                        "id": result.payload.get("id", str(result.id)),
+                        "score": result.score,
+                        **result.payload,
+                    }
+                    for result in results.points
+                ]
+            else:
+                return await self._run_sync_in_executor(
+                    self.search_colpali,
+                    query_multivector=query_multivector,
+                    limit=limit,
+                    filters=filters,
+                    score_threshold=score_threshold,
+                )
+
+    async def async_search_user_docs(
+        self,
+        query_vector: List[float],
+        user_id: str,
+        limit: int = 50,
+        score_threshold: Optional[float] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Async search user documents collection.
+        
+        Always filters by user_id for multi-tenant security.
+        """
+        semaphore = self._get_qdrant_semaphore()
+        async with semaphore:
+            if self.is_remote:
+                # CRITICAL: Always filter by user_id for multi-tenancy
+                qdrant_filter = Filter(
+                    must=[
+                        FieldCondition(key="user_id", match=MatchValue(value=user_id))
+                    ]
+                )
+                client = await self._get_async_client()
+                results = await client.query_points(
+                    collection_name=USER_DOCS_COLLECTION,
+                    query=query_vector,
+                    limit=limit,
+                    query_filter=qdrant_filter,
+                    score_threshold=score_threshold,
+                )
+                return [
+                    {
+                        "id": result.payload.get("id", str(result.id)),
+                        "score": result.score,
+                        **result.payload,
+                    }
+                    for result in results.points
+                ]
+            else:
+                return await self._run_sync_in_executor(
+                    self.search_user_docs,
+                    query_vector=query_vector,
+                    user_id=user_id,
+                    limit=limit,
+                    score_threshold=score_threshold,
+                )
+
+    def _build_filter(self, filters: Optional[Dict[str, Any]]) -> Optional[Filter]:
+        """Build Qdrant filter from dict."""
+        if not filters:
+            return None
+        
+        conditions = []
+        for key, value in filters.items():
+            if value is not None:
+                conditions.append(
+                    FieldCondition(
+                        key=key,
+                        match=MatchValue(value=value),
+                    )
+                )
+        
+        return Filter(must=conditions) if conditions else None
+
     def check_colpali_pdf_exists(self, filename: str) -> bool:
         """Check if any pages for a specific PDF already exist in ColPali collection."""
         try:
@@ -1035,6 +1274,18 @@ class VectorDatabase:
             self._client.close()
             self._client = None
             logger.info("Database connection closed")
+
+    async def async_close(self) -> None:
+        """Close all database connections including async client."""
+        if self._async_client:
+            await self._async_client.close()
+            self._async_client = None
+            logger.info("Async database connection closed")
+        
+        if self._client:
+            self._client.close()
+            self._client = None
+            logger.info("Sync database connection closed")
 
 
 # Convenience function to get database instance
